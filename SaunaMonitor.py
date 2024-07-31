@@ -13,10 +13,36 @@ RUUVITAG_MAC = "AA:BB:CC:DD:EE:FF"
 # Set the target temperature here
 TARGET_TEMP = 65
 
+# Temperature drop threshold (in °C per hour)
+TEMP_DROP_THRESHOLD = -5
+
 # Database setup
 DB_NAME = "sauna_data.db"
 
-# ... [Keep the existing setup_database, store_measurement, and get_historical_data functions] ...
+def setup_database():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS measurements
+                 (timestamp TEXT PRIMARY KEY, temperature REAL, humidity REAL)''')
+    conn.commit()
+    conn.close()
+
+def store_measurement(timestamp, temperature, humidity):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO measurements VALUES (?, ?, ?)",
+              (timestamp, temperature, humidity))
+    conn.commit()
+    conn.close()
+
+def get_historical_data(hours=2):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    time_threshold = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+    c.execute("SELECT * FROM measurements WHERE timestamp > ? ORDER BY timestamp DESC", (time_threshold,))
+    data = c.fetchall()
+    conn.close()
+    return [{"time": row[0], "temperature": row[1], "humidity": row[2]} for row in data]
 
 def get_current_data():
     data = RuuviTagSensor.get_data_for_sensors([RUUVITAG_MAC], 5)
@@ -31,6 +57,22 @@ def get_current_temp():
 def get_current_humidity():
     data = get_current_data()
     return data['humidity'] if data else 0
+
+def get_temperature_trend(hours=0.5):
+    historical_data = get_historical_data(hours=hours)
+    if len(historical_data) < 2:
+        return 0
+    
+    temp_data = [(datetime.strptime(d['time'], '%Y-%m-%d %H:%M:%S'), d['temperature']) for d in historical_data]
+    temp_data.sort()
+    
+    time_diff = (temp_data[-1][0] - temp_data[0][0]).total_seconds() / 3600  # in hours
+    temp_diff = temp_data[-1][1] - temp_data[0][1]
+    
+    if time_diff == 0:
+        return 0
+    
+    return temp_diff / time_diff  # °C per hour
 
 def get_estimated_time():
     historical_data = get_historical_data(hours=2)  # Use last 2 hours of data
@@ -81,6 +123,11 @@ def get_estimated_time():
 
 def get_status_message(current_temp, estimate):
     status, minutes = estimate
+    temp_trend = get_temperature_trend()
+    
+    if temp_trend < TEMP_DROP_THRESHOLD:
+        return "Temperature dropping", "Add wood to stove"
+    
     if status == "Not heating":
         return "Sauna is cold", "Turn on to heat"
     elif status == "Heating just started":
@@ -88,7 +135,10 @@ def get_status_message(current_temp, estimate):
     elif status == "Insufficient data" or status == "Temperature stable":
         return "Status unclear", "Check back soon"
     elif status == "Ready":
-        return "Sauna is ready!", "Enjoy your sauna"
+        if current_temp >= TARGET_TEMP:
+            return "Sauna is ready!", "Enjoy your sauna"
+        else:
+            return "Temp maintaining", "Add wood if needed"
     elif minutes is not None:
         if minutes > 60:
             return f"Est. time to {TARGET_TEMP}°C", f"{minutes // 60}h {minutes % 60}min"
