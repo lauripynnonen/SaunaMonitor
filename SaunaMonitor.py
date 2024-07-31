@@ -6,12 +6,16 @@ from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
 from waveshare_epd import epd7in5_V2
 from ruuvitag_sensor.ruuvi import RuuviTagSensor
+import threading
+import asyncio
+import struct
+from bleak import BleakClient
 
 # Replace with your RuuviTag's MAC address
 RUUVITAG_MAC = "AA:BB:CC:DD:EE:FF"
 
 # Set the target temperature here
-TARGET_TEMP = 65
+TARGET_TEMP = 60
 
 # Temperature drop threshold (in °C per hour)
 TEMP_DROP_THRESHOLD = -5
@@ -19,30 +23,125 @@ TEMP_DROP_THRESHOLD = -5
 # Database setup
 DB_NAME = "sauna_data.db"
 
+# Global variables for current data
+current_temp = 0
+current_humidity = 0
+last_update_time = None
+last_data_store_time = None
+
+# Constants for RuuviTag communication
+UART_TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+UART_RX_CHAR_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+DATATYPE_LOG = 0x3A  # ALL_SENSORS
+LOG_SECONDS = 7200  # 2 hours of historical data
+
 def setup_database():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS measurements
-                 (timestamp TEXT PRIMARY KEY, temperature REAL, humidity REAL)''')
-    conn.commit()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS measurements
+                     (timestamp TEXT PRIMARY KEY, temperature REAL, humidity REAL)''')
+        conn.commit()
+        conn.close()
 
 def store_measurement(timestamp, temperature, humidity):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO measurements VALUES (?, ?, ?)",
-              (timestamp, temperature, humidity))
-    conn.commit()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO measurements VALUES (?, ?, ?)",
+                  (timestamp, temperature, humidity))
+        conn.commit()
+        conn.close()
 
 def get_historical_data(hours=2):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    time_threshold = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
-    c.execute("SELECT * FROM measurements WHERE timestamp > ? ORDER BY timestamp DESC", (time_threshold,))
-    data = c.fetchall()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        time_threshold = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+        c.execute("SELECT * FROM measurements WHERE timestamp > ? ORDER BY timestamp DESC", (time_threshold,))
+        data = c.fetchall()
+        conn.close()
     return [{"time": row[0], "temperature": row[1], "humidity": row[2]} for row in data]
+
+def check_data_freshness():
+    with db_lock:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT MAX(timestamp) FROM measurements")
+        latest_timestamp = c.fetchone()[0]
+        conn.close()
+
+    if latest_timestamp:
+        latest_time = datetime.strptime(latest_timestamp, '%Y-%m-%d %H:%M:%S')
+        time_difference = datetime.now() - latest_time
+        return time_difference <= timedelta(hours=2)
+    return False
+
+def cleanup_old_data(days=10):
+    with db_lock:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        threshold = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+        c.execute("DELETE FROM measurements WHERE timestamp < ?", (threshold,))
+        conn.commit()
+        conn.close()
+
+def handle_data(found_data):
+    global current_temp, current_humidity, last_update_time, last_data_store_time
+    if RUUVITAG_MAC in found_data:
+        data = found_data[RUUVITAG_MAC]
+        current_temp = data['temperature']
+        current_humidity = data['humidity']
+        current_time = datetime.now()
+
+        # Store data every minute
+        if last_data_store_time is None or (current_time - last_data_store_time).total_seconds() >= 60:
+            store_measurement(current_time.strftime('%Y-%m-%d %H:%M:%S'), current_temp, current_humidity)
+            last_data_store_time = current_time
+
+        last_update_time = current_time
+
+def start_realtime_listener():
+    RuuviTagSensor.get_datas(handle_data, [RUUVITAG_MAC])
+
+async def download_historical_data():
+    log_data_end_of_data = False
+    historical_data = []
+
+    def handle_rx(_: int, data: bytearray):
+        nonlocal log_data_end_of_data, historical_data
+        if len(data) > 0 and data[0] == DATATYPE_LOG:
+            if len(data) == 11:
+                dat = struct.unpack('>BBBII', data)
+                if dat[3] == 0xFFFFFFFF and dat[4] == 0xFFFFFFFF:
+                    log_data_end_of_data = True
+                else:
+                    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(dat[3]))
+                    if dat[1] == 0x30:  # Temperature
+                        historical_data.append((timestamp, dat[4]/100.0, None))
+                    elif dat[1] == 0x31:  # Humidity
+                        # Find the matching temperature entry and update it
+                        for i, (t, temp, _) in enumerate(historical_data):
+                            if t == timestamp:
+                                historical_data[i] = (t, temp, dat[4]/100.0)
+                                break
+
+    async with BleakClient(RUUVITAG_MAC) as client:
+        await client.start_notify(UART_TX_CHAR_UUID, handle_rx)
+
+        # Request log data
+        timenow = int(time.time())
+        timeprv = timenow - LOG_SECONDS
+        data_tx = struct.pack('>BBBIIII', DATATYPE_LOG, DATATYPE_LOG, 0x11, timenow, timeprv)
+        await client.write_gatt_char(UART_RX_CHAR_UUID, data_tx)
+
+        while not log_data_end_of_data:
+            await asyncio.sleep(1)
+
+    # Store the downloaded historical data
+    for timestamp, temperature, humidity in historical_data:
+        if temperature is not None and humidity is not None:
+            store_measurement(timestamp, temperature, humidity)
 
 def get_current_data():
     data = RuuviTagSensor.get_data_for_sensors([RUUVITAG_MAC], 5)
@@ -228,52 +327,71 @@ def draw_table(draw, data):
             draw.text((start_x + col*cell_width + 5, start_y + (row+1)*cell_height + 5),
                       value, font=font, fill=0)
 
+def update_display(epd):
+    global current_temp, current_humidity, last_update_time
+    
+    image = Image.new('1', (epd.width, epd.height), 255)
+    draw = ImageDraw.Draw(image)
+
+    estimate = get_estimated_time()
+    status_title, status_message = get_status_message(current_temp, estimate)
+
+    # Draw temperature gauge
+    draw_temperature_gauge(draw, current_temp, 200, 200, 180)
+
+    # Draw humidity and status message
+    title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+    value_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+    
+    draw.text((450, 100), "Humidity", font=title_font, fill=0)
+    draw.text((450, 130), f"{current_humidity:.1f}%", font=value_font, fill=0)
+
+    draw.text((450, 220), status_title, font=title_font, fill=0)
+    draw.text((450, 250), status_message, font=value_font, fill=0)
+
+    # Create and paste graph
+    historical_data = get_historical_data(hours=2)
+    graph = create_graph(historical_data)
+    image.paste(graph, (50, 400))
+
+    # Draw table
+    draw_table(draw, historical_data)
+
+    epd.display(epd.getbuffer(image))
+
 def main():
     setup_database()
     
+    if not check_data_freshness():
+        print("Downloading historical data from RuuviTag...")
+        asyncio.run(download_historical_data())
+        print("Historical data download complete.")
+
+    cleanup_old_data()
+
+    threading.Thread(target=start_realtime_listener, daemon=True).start()
+
     try:
         epd = epd7in5_V2.EPD()
         epd.init()
 
+        last_display_update = datetime.now()
+        last_cleanup = datetime.now()
+
         while True:
-            current_data = get_current_data()
-            if current_data:
-                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                store_measurement(timestamp, current_data['temperature'], current_data['humidity'])
+            current_time = datetime.now()
 
-            image = Image.new('1', (epd.width, epd.height), 255)  # 255: clear the frame
-            draw = ImageDraw.Draw(image)
+            # Update display every 1 minute
+            if (current_time - last_display_update).total_seconds() >= 60:
+                update_display(epd)
+                last_display_update = current_time
 
-            current_temp = get_current_temp()
-            current_humidity = get_current_humidity()
-            estimate = get_estimated_time()
-            status_title, status_message = get_status_message(current_temp, estimate)
+            # Cleanup old data once a day
+            if (current_time - last_cleanup).days >= 1:
+                cleanup_old_data()
+                last_cleanup = current_time
 
-            # Draw temperature gauge
-            draw_temperature_gauge(draw, current_temp, 200, 200, 180)
-
-            # Draw humidity and status message
-            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
-            value_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
-            
-            draw.text((450, 100), "Humidity", font=title_font, fill=0)
-            draw.text((450, 130), f"{current_humidity:.1f}%", font=value_font, fill=0)
-        
-            draw.text((450, 220), status_title, font=title_font, fill=0)
-            draw.text((450, 250), status_message, font=value_font, fill=0)
-
-            # Create and paste graph
-            historical_data = get_historical_data(hours=2)
-            graph = create_graph(historical_data)
-            image.paste(graph, (50, 400))
-
-            # Draw table
-            draw_table(draw, historical_data)
-
-            epd.display(epd.getbuffer(image))
-            
-            # Wait for 5 minutes before the next update
-            time.sleep(300)
+            time.sleep(1)  # Check every second for more responsive updates
 
     except IOError as e:
         print(e)
