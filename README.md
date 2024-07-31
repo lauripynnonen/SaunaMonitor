@@ -27,7 +27,7 @@ Sauna Monitor is a Raspberry Pi-based system that uses a RuuviTag sensor to moni
 ## Setup
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/sauna-monitor.git
+   git clone https://github.com/lauripynnonen/sauna-monitor.git
    cd sauna-monitor
    ```
 
