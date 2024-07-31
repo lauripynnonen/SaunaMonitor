@@ -1,37 +1,81 @@
-# SaunaMonitor
+# Sauna Monitor
 
-This Python script implements the sauna monitor dashboard for your 7.5-inch E-Ink display.
+## Description
+Sauna Monitor is a Raspberry Pi-based system that uses a RuuviTag sensor to monitor and display sauna conditions in real-time. It provides temperature and humidity tracking, estimates time to reach target temperature, and displays historical data on an e-ink display.
 
-We import necessary libraries, including PIL for image processing, matplotlib for graph creation, and the Waveshare EPD library for interfacing with the e-ink display.
-Placeholder functions (get_current_temp(), get_current_humidity(), get_estimated_time(), and get_historical_data()) are included. You'll need to replace these with your actual data collection methods from your Ruuvi sensor.
-The draw_temperature_gauge() function creates the circular temperature gauge.
-create_graph() generates the temperature and humidity graph using matplotlib.
-The main() function:
+## Features
+- Real-time temperature and humidity monitoring
+- Historical data tracking and graphing
+- Temperature trend analysis
+- Estimated time to reach target temperature
+- E-ink display for low power consumption and clear visibility
+- Automatic data cleanup to manage storage efficiently
 
-Initializes the e-ink display
-Creates a new image
-Draws the temperature gauge
-Adds humidity and estimated time information
-Creates and pastes the graph
-Displays the final image on the e-ink display
+## Requirements
+- Raspberry Pi (tested on Raspberry Pi Zero 2 WH)
+- RuuviTag sensor
+- 7.5-inch E-Paper E-Ink Display (Waveshare)
+- Python 3.7+
 
-To use this script:
+## Dependencies
+- ruuvitag_sensor
+- bleak
+- Pillow (PIL)
+- matplotlib
+- waveshare_epd
 
-Install required libraries:
-Copypip install pillow matplotlib RPi.GPIO spidev
+## Setup
+1. Clone the repository:
+   ```
+   git clone https://github.com/yourusername/sauna-monitor.git
+   cd sauna-monitor
+   ```
 
-Install the Waveshare e-Paper library:
-Copygit clone https://github.com/waveshare/e-Paper
-cd e-Paper/RaspberryPi_JetsonNano/python
-sudo python setup.py install
+2. Install required Python packages:
+   ```
+   pip install ruuvitag_sensor bleak Pillow matplotlib
+   ```
 
-Replace the placeholder data collection functions with your actual methods to get data from the Ruuvi sensor.
-Run the script:
-Copypython sauna_monitor.py
+3. Install Waveshare e-Paper library:
+   ```
+   git clone https://github.com/waveshare/e-Paper.git
+   cd e-Paper/RaspberryPi_JetsonNano/python
+   sudo python setup.py install
+   ```
 
+4. Configure your RuuviTag:
+   - Open `config.py` and set `RUUVITAG_MAC` to your RuuviTag's MAC address.
 
-This script will create the dashboard and display it on your e-ink screen. You may need to adjust font paths or sizes depending on your Raspberry Pi's configuration.
-To make this update periodically:
+5. Adjust other settings in `config.py` as needed (e.g., `TARGET_TEMP`, `TEMP_DROP_THRESHOLD`).
 
-You could run this script at regular intervals using a cron job.
-Alternatively, you could modify the script to run in a loop, updating the display every few minutes.
+## Usage
+1. Connect the e-ink display to your Raspberry Pi following Waveshare's instructions.
+
+2. Run the main script:
+   ```
+   python main.py
+   ```
+
+3. The system will start monitoring your sauna and updating the e-ink display every minute.
+
+## File Structure
+- `main.py`: Main script that runs the program
+- `config.py`: Configuration variables and constants
+- `database.py`: Database operations for storing and retrieving data
+- `ruuvitag_interface.py`: RuuviTag data collection and processing
+- `display.py`: E-ink display rendering and updates
+- `data_analysis.py`: Temperature trend and time estimation functions
+
+## Contributing
+Contributions to the Sauna Monitor project are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+- [RuuviTag](https://ruuvi.com/) for their excellent environmental sensors
+- [Waveshare](https://www.waveshare.com/) for the e-Paper display module
+- All contributors and users of this project
+
+## Support
+If you encounter any problems or have any questions, please open an issue on the GitHub repository.
