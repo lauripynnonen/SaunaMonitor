@@ -36,6 +36,10 @@ DATATYPE_LOG = 0x3A  # ALL_SENSORS
 LOG_SECONDS = 7200  # 2 hours of historical data
 
 def setup_database():
+    """
+    Initialize the SQLite database and create the measurements table if it doesn't exist.
+    This function is called at the start of the program to ensure the database is ready for use.
+    """
     with db_lock:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -45,6 +49,14 @@ def setup_database():
         conn.close()
 
 def store_measurement(timestamp, temperature, humidity):
+    """
+    Store a single measurement in the database.
+    
+    Args:
+    timestamp (str): The time of the measurement in 'YYYY-MM-DD HH:MM:SS' format.
+    temperature (float): The temperature reading.
+    humidity (float): The humidity reading.
+    """
     with db_lock:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -54,6 +66,15 @@ def store_measurement(timestamp, temperature, humidity):
         conn.close()
 
 def get_historical_data(hours=2):
+    """
+    Retrieve historical data from the database for the specified number of hours.
+    
+    Args:
+    hours (int): The number of hours of historical data to retrieve (default is 2).
+    
+    Returns:
+    list: A list of dictionaries containing timestamp, temperature, and humidity data.
+    """
     with db_lock:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -64,6 +85,12 @@ def get_historical_data(hours=2):
     return [{"time": row[0], "temperature": row[1], "humidity": row[2]} for row in data]
 
 def check_data_freshness():
+    """
+    Check if the most recent data in the database is fresh (not older than 2 hours).
+    
+    Returns:
+    bool: True if the data is fresh, False otherwise.
+    """
     with db_lock:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -78,6 +105,12 @@ def check_data_freshness():
     return False
 
 def cleanup_old_data(days=10):
+    """
+    Remove data older than the specified number of days from the database.
+    
+    Args:
+    days (int): The number of days to keep data for (default is 10).
+    """
     with db_lock:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -87,6 +120,15 @@ def cleanup_old_data(days=10):
         conn.close()
 
 def handle_data(found_data):
+    """
+    Process data received from the RuuviTag.
+    This function is called every time new data is received from the tag.
+    It updates the current temperature and humidity, and stores the data
+    in the database every minute.
+    
+    Args:
+    found_data (dict): Dictionary containing data from the RuuviTag.
+    """
     global current_temp, current_humidity, last_update_time, last_data_store_time
     if RUUVITAG_MAC in found_data:
         data = found_data[RUUVITAG_MAC]
@@ -102,9 +144,19 @@ def handle_data(found_data):
         last_update_time = current_time
 
 def start_realtime_listener():
+    """
+    Start the real-time listener for RuuviTag data.
+    This function initiates the continuous listening process for data
+    broadcasts from the RuuviTag.
+    """
     RuuviTagSensor.get_datas(handle_data, [RUUVITAG_MAC])
 
 async def download_historical_data():
+    """
+    Download historical data from the RuuviTag using Bluetooth Low Energy.
+    This function connects to the RuuviTag, requests historical data,
+    and stores it in the database.
+    """
     log_data_end_of_data = False
     historical_data = []
 
@@ -144,20 +196,47 @@ async def download_historical_data():
             store_measurement(timestamp, temperature, humidity)
 
 def get_current_data():
+    """
+    Retrieve the most recent data from the RuuviTag.
+    
+    Returns:
+    dict: A dictionary containing the current sensor data, or None if no data is available.
+    """
     data = RuuviTagSensor.get_data_for_sensors([RUUVITAG_MAC], 5)
     if RUUVITAG_MAC in data:
         return data[RUUVITAG_MAC]
     return None
 
 def get_current_temp():
+    """
+    Get the current temperature from the most recent RuuviTag data.
+    
+    Returns:
+    float: The current temperature, or 0 if no data is available.
+    """
     data = get_current_data()
     return data['temperature'] if data else 0
 
 def get_current_humidity():
+    """
+    Get the current humidity from the most recent RuuviTag data.
+    
+    Returns:
+    float: The current humidity, or 0 if no data is available.
+    """
     data = get_current_data()
     return data['humidity'] if data else 0
 
 def get_temperature_trend(hours=0.5):
+    """
+    Calculate the temperature trend over the specified time period.
+    
+    Args:
+    hours (float): The number of hours to consider for the trend calculation (default is 0.5 hours).
+    
+    Returns:
+    float: The temperature change rate in °C per hour.
+    """
     historical_data = get_historical_data(hours=hours)
     if len(historical_data) < 2:
         return 0
@@ -174,6 +253,12 @@ def get_temperature_trend(hours=0.5):
     return temp_diff / time_diff  # °C per hour
 
 def get_estimated_time():
+    """
+    Estimate the time remaining to reach the target temperature.
+    
+    Returns:
+    tuple: A tuple containing the status (str) and estimated time in minutes (int or None).
+    """
     historical_data = get_historical_data(hours=2)  # Use last 2 hours of data
     if len(historical_data) < 2:
         return "Insufficient data", None
@@ -221,6 +306,16 @@ def get_estimated_time():
     return f"{minutes_to_target} min", minutes_to_target
 
 def get_status_message(current_temp, estimate):
+    """
+    Generate a status message based on the current temperature and time estimate.
+    
+    Args:
+    current_temp (float): The current temperature.
+    estimate (tuple): The output from get_estimated_time().
+    
+    Returns:
+    tuple: A tuple containing the status title (str) and status message (str).
+    """
     status, minutes = estimate
     temp_trend = get_temperature_trend()
     
@@ -248,6 +343,16 @@ def get_status_message(current_temp, estimate):
 
 
 def draw_temperature_gauge(draw, value, x, y, radius):
+    """
+    Draw a circular temperature gauge on the given drawing context.
+    
+    Args:
+    draw (PIL.ImageDraw.Draw): The drawing context.
+    value (float): The temperature value to display.
+    x (int): The x-coordinate of the gauge center.
+    y (int): The y-coordinate of the gauge center.
+    radius (int): The radius of the gauge.
+    """
     # Draw outer circle
     draw.ellipse([x-radius, y-radius, x+radius, y+radius], outline=0)
     
@@ -279,6 +384,15 @@ def draw_temperature_gauge(draw, value, x, y, radius):
     draw.text((x, y+radius-40), f"{value:.2f}°C", fill=0, anchor="mm", font=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36))
 
 def create_graph(data):
+     """
+    Create a graph of temperature and humidity data.
+    
+    Args:
+    data (list): A list of dictionaries containing historical temperature and humidity data.
+    
+    Returns:
+    PIL.Image: An image of the created graph.
+    """
     times = [item["time"] for item in data]
     temps = [item["temperature"] for item in data]
     humidities = [item["humidity"] for item in data]
@@ -306,6 +420,13 @@ def create_graph(data):
     return Image.open('graph.png').convert('L')
 
 def draw_table(draw, data):
+    """
+    Draw a table of recent measurements on the given drawing context.
+    
+    Args:
+    draw (PIL.ImageDraw.Draw): The drawing context.
+    data (list): A list of dictionaries containing recent measurement data.
+    """
     start_x, start_y = 50, 400
     cell_width, cell_height = 150, 30
     header_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
@@ -328,6 +449,12 @@ def draw_table(draw, data):
                       value, font=font, fill=0)
 
 def update_display(epd):
+    """
+    Update the e-ink display with the latest sauna information.
+    
+    Args:
+    epd (waveshare_epd.epd7in5_V2.EPD): The e-ink display object.
+    """
     global current_temp, current_humidity, last_update_time
     
     image = Image.new('1', (epd.width, epd.height), 255)
@@ -360,6 +487,12 @@ def update_display(epd):
     epd.display(epd.getbuffer(image))
 
 def main():
+    """
+    Main function to run the Sauna Monitor program.
+    This function initializes the database, checks data freshness,
+    starts the real-time listener, and enters the main loop for
+    updating the display and managing data.
+    """
     setup_database()
     
     if not check_data_freshness():
