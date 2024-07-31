@@ -1,3 +1,5 @@
+# Initial master file, now split into multiple smaller files for easier updates
+
 import time
 import math
 import sqlite3
