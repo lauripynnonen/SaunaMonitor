@@ -30,56 +30,51 @@ def get_temperature_trend(hours=0.5):
 
 def get_estimated_time():
     """
-    Estimate the time remaining to reach the target temperature.
+    Estimate the time remaining to reach the target temperature and determine sauna state.
     
     Returns:
-    tuple: A tuple containing the status (str) and estimated time in minutes (int or None).
+    tuple: A tuple containing the status (str), estimated time in minutes (int or None),
+           and a boolean indicating if the sauna is active.
     """
-    historical_data = get_historical_data(hours=2)  # Use last 2 hours of data
+    historical_data = get_historical_data(hours=1)  # Use last 1 hour of data
     if len(historical_data) < 2:
-        return "Insufficient data", None
+        return "Insufficient data", None, False
     
     # Convert data to list of tuples (timestamp, temperature)
     temp_data = [(datetime.strptime(d['time'], '%Y-%m-%d %H:%M:%S'), d['temperature']) for d in historical_data]
     temp_data.sort()  # Ensure data is in chronological order
     
-    # Find when temperature started rising significantly
-    start_index = 0
-    for i in range(1, len(temp_data)):
-        if temp_data[i][1] - temp_data[i-1][1] > 1:  # 1°C threshold for significant rise
-            start_index = i
-            break
+    current_temp = temp_data[-1][1]
     
-    if start_index == 0:
-        return "Not heating", None
+    # Check if the sauna is cold
+    if current_temp < MIN_ACTIVE_TEMP:
+        return "Cold", None, False
     
-    # Use data from the point where temperature started rising
-    rising_temp_data = temp_data[start_index:]
+    # Check if the sauna is at or above target temperature
+    if current_temp >= TARGET_TEMP:
+        return "Ready", None, True
     
-    if len(rising_temp_data) < 2:
-        return "Heating just started", None
-    
-    # Calculate rate of temperature increase using the most recent 15 minutes of data
-    recent_data = [d for d in rising_temp_data if d[0] >= rising_temp_data[-1][0] - timedelta(minutes=15)]
-    
+    # Calculate temperature change over the last 15 minutes
+    recent_data = [d for d in temp_data if d[0] >= temp_data[-1][0] - timedelta(minutes=15)]
     if len(recent_data) < 2:
-        recent_data = rising_temp_data[-2:]  # Use at least two points
+        recent_data = temp_data[-2:]  # Use at least two points
     
     time_diff = (recent_data[-1][0] - recent_data[0][0]).total_seconds() / 3600  # in hours
     temp_diff = recent_data[-1][1] - recent_data[0][1]
     
-    if time_diff == 0 or temp_diff <= 0:
-        return "Temperature stable", None
+    # Check for stable temperature
+    if abs(temp_diff) < 1:  # Less than 1°C change in 15 minutes
+        return "Temperature stable", None, True
     
-    rate = temp_diff / time_diff  # °C per hour
+    # Check if heating
+    if temp_diff > 0:
+        rate = temp_diff / time_diff  # °C per hour
+        time_to_target = (TARGET_TEMP - current_temp) / rate
+        minutes_to_target = int(time_to_target * 60)
+        return "Heating", minutes_to_target, True
     
-    time_to_target = (TARGET_TEMP - recent_data[-1][1]) / rate
-    
-    if time_to_target <= 0:
-        return "Ready", None
-    
-    minutes_to_target = int(time_to_target * 60)
-    return f"{minutes_to_target} min", minutes_to_target
+    # Temperature is dropping
+    return "Cooling", None, True
 
 def get_status_message(current_temp, estimate):
     """
@@ -92,27 +87,25 @@ def get_status_message(current_temp, estimate):
     Returns:
     tuple: A tuple containing the status title (str) and status message (str).
     """
-    status, minutes = estimate
-    temp_trend = get_temperature_trend()
+    status, minutes, is_active = estimate
     
-    if temp_trend < TEMP_DROP_THRESHOLD:
-        return "Temperature dropping", "Add wood to stove"
-    
-    if status == "Not heating":
+    if status == "Cold":
         return "Sauna is cold", "Turn on to heat"
-    elif status == "Heating just started":
-        return "Heating up", "Estimating time..."
-    elif status == "Insufficient data" or status == "Temperature stable":
-        return "Status unclear", "Check back soon"
+    elif status == "Insufficient data":
+        return "Collecting data", "Please wait..."
+    elif status == "Temperature stable":
+        if current_temp < TARGET_TEMP:
+            return "Temp stable", "Add wood to increase"
+        else:
+            return "Temp stable", "Enjoy your sauna"
     elif status == "Ready":
-        if current_temp >= TARGET_TEMP:
-            return "Sauna is ready!", "Enjoy your sauna"
-        else:
-            return "Temp maintaining", "Add wood if needed"
-    elif minutes is not None:
+        return "Sauna is ready!", "Enjoy your sauna"
+    elif status == "Heating":
         if minutes > 60:
-            return f"Est. time to {TARGET_TEMP}°C", f"{minutes // 60}h {minutes % 60}min"
+            return f"Heating", f"{minutes // 60}h {minutes % 60}min to {TARGET_TEMP}°C"
         else:
-            return f"Est. time to {TARGET_TEMP}°C", f"{minutes} min"
+            return f"Heating", f"{minutes} min to {TARGET_TEMP}°C"
+    elif status == "Cooling":
+        return "Temp dropping", "Add wood if needed"
     else:
         return "Status unknown", "Check sauna"
