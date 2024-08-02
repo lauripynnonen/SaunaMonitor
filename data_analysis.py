@@ -1,12 +1,6 @@
 from datetime import datetime, timedelta
 from config import TARGET_TEMP, MIN_ACTIVE_TEMP
-
-# To avoid circular imports, consider passing historical_data as a parameter
-# or use a function to get the data that's passed in from the main script
-def get_historical_data(hours=2):
-    # This is a placeholder. In the actual implementation, this function
-    # should be imported from database.py or passed as a parameter
-    pass
+from database import get_historical_data
 
 def get_temperature_trend(hours=0.5):
     """
