@@ -1,6 +1,6 @@
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
-from waveshare_epd import epd7in5_V2
+import epaper
 from config import DISPLAY_WIDTH, DISPLAY_HEIGHT
 from database import get_historical_data
 import math
@@ -8,7 +8,7 @@ from datetime import datetime
 
 class Display:
     def __init__(self):
-        self.epd = epd7in5_V2.EPD()
+        self.epd = epaper.epaper('epd7in5_V2').EPD()
         self.width = DISPLAY_WIDTH
         self.height = DISPLAY_HEIGHT
         self.is_sleeping = False
@@ -27,10 +27,6 @@ class Display:
         if self.is_sleeping:
             self.epd.init()
             self.is_sleeping = False
-
-    def cleanup(self):
-        self.epd.sleep()
-        epd7in5_V2.epdconfig.module_exit()
 
     def update(self, current_temp, current_humidity, status_title, status_message):
         if self.is_sleeping:

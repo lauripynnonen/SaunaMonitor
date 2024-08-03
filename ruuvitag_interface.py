@@ -1,8 +1,18 @@
-```python
+import asyncio
+import time
+import struct
+import bleak 
+from datetime import datetime, timezone
+
 from ruuvitag_sensor.ruuvi import RuuviTagSensor
 from datetime import datetime
-from config import RUUVITAG_MAC
+from config import DATATYPE_LOG, LOG_SECONDS, RUUVITAG_MAC
 from database import store_measurement
+
+## Nordic UART Service UUIDs, do _not_ change these
+UART_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+UART_RX_CHAR_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+UART_TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 current_temp = 0
 current_humidity = 0
@@ -68,7 +78,7 @@ async def download_historical_data():
                                 historical_data[i] = (t, temp, dat[4]/100.0)
                                 break
 
-    async with BleakClient(RUUVITAG_MAC) as client:
+    async with bleak.BleakClient(RUUVITAG_MAC) as client:
         await client.start_notify(UART_TX_CHAR_UUID, handle_rx)
 
         # Request log data

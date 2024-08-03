@@ -1,7 +1,16 @@
 # config.py
 
 # RuuviTag settings
-RUUVITAG_MAC = "AA:BB:CC:DD:EE:FF"
+TEMPERATURE  = 0x30  # \x30 Temperature  [0,01°C]
+HUMIDITY     = 0x31  # \x31 Humidity     [0,01%rH]
+AIR_PRESSURE = 0x32  # \x32 Air pressure [1Pa]
+ALL_SENSORS  = 0x3A  # \x3A All of the above
+RUUVITAG_MAC = "C5:D5:BF:EA:9E:0D"
+
+## Number of seconds to get log data
+LOG_SECONDS = 7200  # 7200 = last 2 hours
+
+DATATYPE_LOG = TEMPERATURE
 
 # Temperature settings
 TARGET_TEMP = 65  # Target temperature for the sauna in °C

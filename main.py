@@ -2,7 +2,7 @@ import time
 import threading
 import asyncio
 from database import setup_database, check_data_freshness, cleanup_old_data
-from ruuvitag_interface import RuuviTagInterface
+from ruuvitag_interface import RuuviTagInterface, download_historical_data
 from display import Display
 from data_analysis import get_estimated_time, get_status_message
 from config import SLEEP_DURATION, UPDATE_INTERVAL
@@ -60,7 +60,6 @@ def main():
 
     except KeyboardInterrupt:    
         print("Ctrl + C pressed. Exiting...")
-        display.cleanup()
         ruuvi.stop_listener()
 
 if __name__ == '__main__':
