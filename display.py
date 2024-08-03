@@ -1,14 +1,46 @@
+import os
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
-import epaper
 from config import DISPLAY_WIDTH, DISPLAY_HEIGHT
 from database import get_historical_data
 import math
 from datetime import datetime
 
+# Check if we're running on a Raspberry Pi
+ON_RASPBERRY_PI = os.uname()[4][:3] == 'arm'
+
+if ON_RASPBERRY_PI:
+    import epaper
+else:
+    print("Not running on Raspberry Pi. Using mock display.")
+
+class MockEPD:
+    def __init__(self):
+        self.width = DISPLAY_WIDTH
+        self.height = DISPLAY_HEIGHT
+
+    def init(self):
+        pass
+
+    def Clear(self, color):
+        pass
+
+    def sleep(self):
+        pass
+
+    def display(self, image):
+        image.save('mock_display.png')
+        print("Display image saved as 'mock_display.png'")
+
+    def getbuffer(self, image):
+        return image  # For mock display, we just return the image itself
+
 class Display:
     def __init__(self):
-        self.epd = epaper.epaper('epd7in5_V2').EPD()
+        if ON_RASPBERRY_PI:
+            self.epd = epaper.epaper('epd7in5_V2').EPD()
+        else:
+            self.epd = MockEPD()
         self.width = DISPLAY_WIDTH
         self.height = DISPLAY_HEIGHT
         self.is_sleeping = False
@@ -78,7 +110,7 @@ class Display:
         draw.text((x, y+radius-40), f"{value:.2f}°C", fill=0, anchor="mm", font=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36))
 
     def create_graph(self, data):
-        times = [item["time"] for item in data]
+        times = [datetime.strptime(item["time"], '%Y-%m-%d %H:%M:%S') for item in data]
         temps = [item["temperature"] for item in data]
         humidities = [item["humidity"] for item in data]
 
