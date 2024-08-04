@@ -14,7 +14,7 @@ DATATYPE_LOG = ALL_SENSORS
 
 # Temperature settings
 TARGET_TEMP = 65  # Target temperature for the sauna in °C
-MIN_ACTIVE_TEMP = 40  # Minimum temperature to consider the sauna active in °C
+MIN_ACTIVE_TEMP = 30  # Minimum temperature to consider the sauna active in °C
 TEMP_DROP_THRESHOLD = -5  # Temperature drop threshold in °C per hour
 
 # Database settings

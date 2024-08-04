@@ -1,28 +1,40 @@
 import math
-import matplotlib.pyplot as plt
+import traceback
 from PIL import Image, ImageDraw, ImageFont
+import matplotlib.pyplot as plt
 import io
 from datetime import datetime, timedelta
+from data_analysis import get_current_time
 import os
 
-
 class Display:
-    def __init__(self, width, height):
-        self.width = width
-        self.height = height
-        self.is_sleeping = False
-        self.historical_data = []
-        self.is_mock = not self._is_raspberry_pi()
-        self.mock_display_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mock_display.png')
-        self.font = self.load_font()
-        self.graph_width = int(width * 0.95)  # 100% of display width
-        self.graph_height = int(height * 0.48)  # 48% of display height
+    def __init__(self, width=800, height=480):  # Default values added
+        try:
+            print(f"Initializing Display with width={width}, height={height}")
+            self.width = width
+            self.height = height
+            self.is_sleeping = False
+            self.historical_data = []
+            self.is_mock = not self._is_raspberry_pi()
+            self.mock_display_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mock_display.png')
+            self.font = self.load_font()
+            self.graph_width = int(width * 0.95)  # 95% of display width
+            self.graph_height = int(height * 0.40)  # 40% of display height
 
-        if not self.is_mock:
-            import epaper # type: ignore
-            self.epd = epaper.epaper('epd7in5_V2').EPD()
-        else:
-            print(f"Using mock display. Images will be saved to: {self.mock_display_path}")
+            if not self.is_mock:
+                try:
+                    import epaper # type: ignore
+                    self.epd = epaper.epaper('epd7in5_V2').EPD()
+                    print("Successfully initialized epaper display")
+                except Exception as e:
+                    print(f"Error initializing epaper display: {str(e)}")
+                    self.is_mock = True
+            
+            if self.is_mock:
+                print(f"Using mock display. Images will be saved to: {self.mock_display_path}")
+        except Exception as e:
+            print(f"Error in Display.init: {str(e)}")
+            print("Traceback:")
 
     def _is_raspberry_pi(self):
         return os.name == 'posix' and os.uname().sysname == 'Linux' and os.uname().machine.startswith('arm')
@@ -53,36 +65,46 @@ class Display:
         self.is_sleeping = False
 
     def update(self, current_temp, current_humidity, status_title, status_message):
-        if self.is_sleeping:
-            self.wake()
+        try:
+            if self.is_sleeping:
+                self.wake()
 
-        image = Image.new('1', (self.width, self.height), 255)
-        draw = ImageDraw.Draw(image)
+            image = Image.new('1', (self.width, self.height), 255)
+            draw = ImageDraw.Draw(image)
 
-        # Draw temperature gauge
-        self.draw_gauge(draw, current_temp, 120, 120, 110, "Temperature", "°C", 0, 100)
+            # Draw current time at the top
+            current_time = get_current_time()
+            draw.text((self.width // 2, 10), f"Current Time: {current_time.strftime('%H:%M')}", 
+                    fill=0, anchor="mt", font=self.load_font(24))
 
-        # Draw humidity gauge
-        self.draw_gauge(draw, current_humidity, self.width - 120, 120, 110, "Humidity", "%", 0, 100)
+            # Draw temperature gauge
+            self.draw_gauge(draw, current_temp, 120, 140, 110, "Temperature", "°C", 0, 100)
 
-        # Draw status
-        self.draw_status(draw, status_title, status_message)
+            # Draw humidity gauge
+            self.draw_gauge(draw, current_humidity, self.width - 120, 140, 110, "Humidity", "%", 0, 100)
 
-        if self.historical_data:
-            # Create and paste graph
-            graph = self.create_graph()
-            image.paste(graph, (int(self.width * 0.025), 250))  # 2.5% margin on left
+            # Draw status
+            self.draw_status(draw, status_title, status_message)
 
-        if self.is_mock:
-            try:
-                image.save(self.mock_display_path)
-                print(f"Display image saved as '{self.mock_display_path}'")
-            except Exception as e:
-                print(f"Error saving mock display image: {e}")
-                print(f"Current working directory: {os.getcwd()}")
-                print(f"File path used: {self.mock_display_path}")
-        else:
-            self.epd.display(self.epd.getbuffer(image)) 
+            if self.historical_data:
+                # Create and paste graph
+                graph = self.create_graph()
+                image.paste(graph, (int(self.width * 0.025), 280))  # Moved up
+
+            if self.is_mock:
+                try:
+                    image.save(self.mock_display_path)
+                    print(f"Display image saved as '{self.mock_display_path}'")
+                except Exception as e:
+                    print(f"Error saving mock display image: {e}")
+                    print(f"Current working directory: {os.getcwd()}")
+                    print(f"File path used: {self.mock_display_path}")
+            else:
+                self.epd.display(self.epd.getbuffer(image))
+        except Exception as e:
+            print(f"Error in Display.update: {str(e)}")
+            print("Traceback:")
+            traceback.print_exc()
 
     def add_data_point(self, data_point):
         self.historical_data.append(data_point)
@@ -109,8 +131,8 @@ class Display:
 
         # No need for time label maybe
         # ax1.set_xlabel('Time', fontsize=10)
-        ax1.set_ylabel('Temperature (°C)', fontsize=10)
-        ax2.set_ylabel('Humidity (%)', fontsize=10)
+        ax1.set_ylabel('Temperature (°C)', fontsize=12)
+        ax2.set_ylabel('Humidity (%)', fontsize=12)
 
         # Format x-axis to show time
         def format_time(x, pos):
@@ -211,28 +233,27 @@ class Display:
         # Draw center circle
         draw.ellipse([x-3, y-3, x+3, y+3], fill=0)
 
-    def draw_table(self, draw, data):
-        start_x, start_y = 50, 400
-        cell_width, cell_height = 150, 30
-        header_font = self.load_font(16)
-        font = self.load_font(14)
-
-        headers = ["Time", "Temp (°C)", "Humidity (%)"]
-        for i, header in enumerate(headers):
-            draw.rectangle([start_x + i*cell_width, start_y, start_x + (i+1)*cell_width, start_y + cell_height], outline=0)
-            draw.text((start_x + i*cell_width + 5, start_y + 5), header, font=header_font, fill=0)
-
-        for row, measurement in enumerate(data):
-            time = datetime.strptime(measurement['time'], '%Y-%m-%d %H:%M:%S').strftime('%H:%M')
-            temp = f"{measurement['temperature']:.1f}" if measurement['temperature'] is not None else "N/A"
-            humidity = f"{measurement['humidity']:.1f}" if measurement['humidity'] is not None else "N/A"
-            row_data = [time, temp, humidity]
-            for col, value in enumerate(row_data):
-                draw.rectangle([start_x + col*cell_width, start_y + (row+1)*cell_height,
-                                start_x + (col+1)*cell_width, start_y + (row+2)*cell_height], outline=0)
-                draw.text((start_x + col*cell_width + 5, start_y + (row+1)*cell_height + 5),
-                          value, font=font, fill=0)
-
     def draw_status(self, draw, status_title, status_message):
-        draw.text((self.width // 2, 100), status_title, font=self.load_font(28), fill=0, anchor="mm")
-        draw.text((self.width // 2, 140), status_message, font=self.load_font(28), fill=0, anchor="mm")
+        title_font = self.load_font(28)
+        message_font = self.load_font(24)
+        
+        # Calculate text sizes using textbbox
+        title_bbox = title_font.getbbox(status_title)
+        title_height = title_bbox[3] - title_bbox[1]
+        
+        # Calculate positions
+        center_x = self.width // 2
+        title_y = 120  # Moved up
+        message_y = title_y + title_height + 5  # Reduced padding
+        
+        # Draw title
+        draw.text((center_x, title_y), status_title, font=title_font, fill=0, anchor="mt")
+        
+        # Draw message (can be multi-line)
+        lines = status_message.split('\n')
+        for i, line in enumerate(lines):
+            message_bbox = message_font.getbbox(line)
+            message_height = message_bbox[3] - message_bbox[1]
+            line_y = message_y + i * (message_height + 3)  # Reduced space between lines
+            draw.text((center_x, line_y), line, font=message_font, fill=0, anchor="mt")
+

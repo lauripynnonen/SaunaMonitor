@@ -1,5 +1,6 @@
 import asyncio
 import time
+import pandas as pd
 from database import setup_database, check_data_freshness, cleanup_old_data, get_historical_data
 from ruuvitag_interface import RuuviTagInterface
 from display import Display
@@ -47,17 +48,22 @@ async def main():
         for data_point in historical_data:
             print(f"Time: {data_point['time']}, Temp: {data_point['temperature']}, Humidity: {data_point['humidity']}")
             display.add_data_point(data_point)
-            
+
         if historical_data:
-            latest_data = historical_data[0]
+            latest_data = historical_data[-1]  # Use the most recent data point
             current_temp = latest_data['temperature']
             current_humidity = latest_data['humidity']
-            status, minutes, is_active = get_estimated_time()
-            status_title, status_message = get_status_message(current_temp, (status, minutes, is_active))
+            status, minutes, expected_ready_time, is_active = get_estimated_time()  # Unpack 4 values
+            status_title, status_message = get_status_message(current_temp, (status, minutes, expected_ready_time, is_active))
             display.update(current_temp, current_humidity, status_title, status_message)
             print("Display updated with historical data.")
         else:
             print("No historical data available for initial display update.")
+    except Exception as e:
+        print(f"Error initializing or updating display: {e}")
+        print("Continuing without display updates.")
+        display = None
+
     except Exception as e:
         print(f"Error initializing or updating display: {e}")
         print("Continuing without display updates.")
@@ -82,14 +88,14 @@ async def main():
                 print(f"Current readings - Temperature: {current_temp:.2f}°C, Humidity: {current_humidity:.2f}%")
                 
                 if display:
-                    status, minutes, is_active = get_estimated_time()
+                    status, minutes, expected_ready_time, is_active = get_estimated_time()  # Now unpacking 4 values
                     
                     if is_active or current_time >= display_sleep_until:
                         if display.is_sleeping:
                             display.wake()
                         
                         if current_time - last_update_time >= UPDATE_INTERVAL:
-                            status_title, status_message = get_status_message(current_temp, (status, minutes, is_active))
+                            status_title, status_message = get_status_message(current_temp, (status, minutes, expected_ready_time, is_active))  # Passing 4 values
                             
                             print(f"Updating display - Status: {status_title}, Message: {status_message}")
                             display.update(current_temp, current_humidity, status_title, status_message)
