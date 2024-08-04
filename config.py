@@ -10,7 +10,7 @@ RUUVITAG_MAC = "C5:D5:BF:EA:9E:0D"
 ## Number of seconds to get log data
 LOG_SECONDS = 7200  # 7200 = last 2 hours
 
-DATATYPE_LOG = TEMPERATURE
+DATATYPE_LOG = ALL_SENSORS
 
 # Temperature settings
 TARGET_TEMP = 65  # Target temperature for the sauna in °C
