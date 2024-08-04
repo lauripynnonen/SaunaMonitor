@@ -5,6 +5,7 @@ import io
 from datetime import datetime, timedelta
 import os
 
+
 class Display:
     def __init__(self, width, height):
         self.width = width
@@ -12,8 +13,10 @@ class Display:
         self.is_sleeping = False
         self.historical_data = []
         self.is_mock = not self._is_raspberry_pi()
-        self.font = self.load_font()
         self.mock_display_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mock_display.png')
+        self.font = self.load_font()
+        self.graph_width = int(width * 0.95)  # 95% of display width
+        self.graph_height = int(height * 0.5)  # 50% of display height
 
         if not self.is_mock:
             import epaper # type: ignore
@@ -56,13 +59,16 @@ class Display:
         image = Image.new('1', (self.width, self.height), 255)
         draw = ImageDraw.Draw(image)
 
-        self.draw_temperature_gauge(draw, current_temp, 200, 200, 180)
+        # Draw temperature gauge
+        self.draw_temperature_gauge(draw, current_temp, 120, 120, 110)
+
+        # Draw humidity and status
         self.draw_humidity_and_status(draw, current_humidity, status_title, status_message)
 
         if self.historical_data:
+            # Create and paste graph
             graph = self.create_graph()
-            image.paste(graph, (50, 400))
-            self.draw_table(draw, self.historical_data[-8:])  # Display last 8 data points
+            image.paste(graph, (int(self.width * 0.025), 240))  # 2.5% margin on left
 
         if self.is_mock:
             try:
@@ -75,7 +81,6 @@ class Display:
         else:
             self.epd.display(self.epd.getbuffer(image))
 
-
     def add_data_point(self, data_point):
         self.historical_data.append(data_point)
         # Keep only the last 2 hours of data
@@ -83,37 +88,72 @@ class Display:
         self.historical_data = [point for point in self.historical_data if datetime.strptime(point['time'], '%Y-%m-%d %H:%M:%S') > two_hours_ago]
 
     def create_graph(self):
-        times = [datetime.strptime(item['time'], '%Y-%m-%d %H:%M:%S') for item in self.historical_data]
+        # Parse the full datetime
+        datetimes = [datetime.strptime(item['time'], '%Y-%m-%d %H:%M:%S') for item in self.historical_data]
+        
+        # Convert times to numerical values (minutes since midnight)
+        times = [(dt.hour * 60 + dt.minute) for dt in datetimes]
+        
         temps = [item['temperature'] for item in self.historical_data]
         humidities = [item['humidity'] for item in self.historical_data]
 
-        fig, ax1 = plt.subplots(figsize=(10, 4))
+        # Create figure with size in inches
+        fig, ax1 = plt.subplots(figsize=(self.graph_width / 100, self.graph_height / 100))
         ax2 = ax1.twinx()
 
-        ax1.plot(times, temps, 'r-', linewidth=2, label='Temperature')
-        ax2.plot(times, humidities, 'b--', linewidth=2, label='Humidity')
+        ax1.plot(times, temps, 'k-', linewidth=1, label='Temperature')
+        ax2.plot(times, humidities, 'k--', linewidth=1, label='Humidity')
 
-        ax1.set_xlabel('Time')
-        ax1.set_ylabel('Temperature (°C)', color='r')
-        ax2.set_ylabel('Humidity (%)', color='b')
+        ax1.set_xlabel('Time', fontsize=8)
+        ax1.set_ylabel('Temperature (°C)', fontsize=8)
+        ax2.set_ylabel('Humidity (%)', fontsize=8)
 
-        ax1.tick_params(axis='y', labelcolor='r')
-        ax2.tick_params(axis='y', labelcolor='b')
+        # Format x-axis to show time
+        def format_time(x, pos):
+            hours, minutes = divmod(int(x), 60)
+            return f'{hours:02d}:{minutes:02d}'
+        
+        ax1.xaxis.set_major_formatter(plt.FuncFormatter(format_time))
+        
+        # Rotate and align the tick labels so they look better
+        fig.autofmt_xdate(rotation=45, ha='right')
 
-        plt.title('Temperature and Humidity Over Time')
+        # Set y-axis limits dynamically
+        temp_min, temp_max = min(temps), max(temps)
+        hum_min, hum_max = min(humidities), max(humidities)
+        
+        temp_range = max(0.5, temp_max - temp_min)  # Ensure a minimum range
+        hum_range = max(2, hum_max - hum_min)  # Ensure a minimum range
+        
+        ax1.set_ylim(temp_min - 0.1 * temp_range, temp_max + 0.1 * temp_range)
+        ax2.set_ylim(hum_min - 0.1 * hum_range, hum_max + 0.1 * hum_range)
+
+        # Set integer ticks for both y-axes
+        ax1.yaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=5))
+        ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=5))
+
+        ax1.tick_params(axis='both', which='major', labelsize=6)
+        ax2.tick_params(axis='both', which='major', labelsize=6)
+
+        plt.title('Temperature and Humidity Over Time', fontsize=10)
         
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=6)
 
-        plt.tight_layout()
+        # Adjust layout with reduced bottom margin
+        plt.tight_layout(pad=0.4, rect=[0, 0.03, 1, 0.95])
+        
+        # Fine-tune the subplot adjust
+        fig.subplots_adjust(bottom=0.2)  # Increased bottom margin to accommodate rotated labels
 
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         buf.seek(0)
 
-        return Image.open(buf).convert('1')
+        graph_image = Image.open(buf).convert('1')
+        return graph_image.resize((self.graph_width, self.graph_height), Image.LANCZOS)
 
     def draw_temperature_gauge(self, draw, value, x, y, radius):
         # Draw outer circle
@@ -130,21 +170,22 @@ class Display:
             
             if i % 2 == 0:
                 num = i * 10
-                num_x = x + int((radius - 30) * math.cos(angle))
-                num_y = y + int((radius - 30) * math.sin(angle))
-                draw.text((num_x, num_y), str(num), fill=0)
+                num_x = x + int((radius - 25) * math.cos(angle))
+                num_y = y + int((radius - 25) * math.sin(angle))
+                draw.text((num_x, num_y), str(num), fill=0, font=self.load_font(12))
 
         # Draw needle
         angle = math.radians(-135 + (value / 100) * 270)
-        needle_x = x + int((radius - 20) * math.cos(angle))
-        needle_y = y + int((radius - 20) * math.sin(angle))
-        draw.line((x, y, needle_x, needle_y), fill=0, width=3)
+        needle_x = x + int((radius - 15) * math.cos(angle))
+        needle_y = y + int((radius - 15) * math.sin(angle))
+        draw.line((x, y, needle_x, needle_y), fill=0, width=2)
         
         # Draw center circle
-        draw.ellipse([x-5, y-5, x+5, y+5], fill=0)
+        draw.ellipse([x-3, y-3, x+3, y+3], fill=0)
         
         # Draw value
-        draw.text((x, y+radius-40), f"{value:.2f}°C", fill=0, anchor="mm", font=self.font)
+        draw.text((x, y+radius-60), f"{int(value)}°C", fill=0, anchor="mm", font=self.load_font(28))
+
 
     def draw_table(self, draw, data):
         start_x, start_y = 50, 400
@@ -170,11 +211,8 @@ class Display:
 
 
     def draw_humidity_and_status(self, draw, humidity, status_title, status_message):
-        title_font = self.load_font(24)
-        value_font = self.load_font(48)
+        draw.text((300, 50), "Humidity", font=self.load_font(18), fill=0)
+        draw.text((300, 75), f"{int(humidity)}%", font=self.load_font(36), fill=0)
 
-        draw.text((450, 100), "Humidity", font=title_font, fill=0)
-        draw.text((450, 130), f"{humidity:.1f}%", font=value_font, fill=0)
-
-        draw.text((450, 220), status_title, font=title_font, fill=0)
-        draw.text((450, 250), status_message, font=value_font, fill=0)
+        draw.text((300, 130), status_title, font=self.load_font(18), fill=0)
+        draw.text((300, 155), status_message, font=self.load_font(24), fill=0)
