@@ -1,40 +1,70 @@
-import time
 import asyncio
-from database import setup_database, check_data_freshness, cleanup_old_data
+import time
+from database import setup_database, check_data_freshness, cleanup_old_data, get_historical_data
 from ruuvitag_interface import RuuviTagInterface
 from display import Display
 from data_analysis import get_estimated_time, get_status_message
-from config import SLEEP_DURATION, UPDATE_INTERVAL
+from config import SLEEP_DURATION, UPDATE_INTERVAL, DISPLAY_WIDTH, DISPLAY_HEIGHT
 
-def main():
+async def main():
     print("Initializing SaunaMonitor...")
-    setup_database()
-    print("Database setup complete.")
-    
+    try:
+        setup_database()
+        print("Database setup complete.")
+    except Exception as e:
+        print(f"Error setting up database: {e}")
+        return
+
     ruuvi = RuuviTagInterface()
     
-    if not check_data_freshness():
-        print("Attempting to download historical data from RuuviTag...")
-        try:
-            asyncio.run(ruuvi.download_historical_data())
-            print("Historical data download complete.")
-        except Exception as e:
-            print(f"Error downloading historical data: {e}")
-            print("Continuing with real-time data only.")
+    print("Attempting to download historical data from RuuviTag...")
+    try:
+        await ruuvi.download_historical_data()
+        print("Historical data download attempt completed.")
+    except Exception as e:
+        print(f"Error during historical data download attempt: {e}")
+        print("Continuing with real-time data only.")
 
-    cleanup_old_data()
-    print("Old data cleanup complete.")
+    if check_data_freshness():
+        print("Data is fresh.")
+    else:
+        print("Data is not fresh. Consider investigating if historical data was successfully downloaded.")
 
     try:
-        display = Display()
+        cleanup_old_data()
+        print("Old data cleanup complete.")
+    except Exception as e:
+        print(f"Error during old data cleanup: {e}")
+
+    try:
+        display = Display(DISPLAY_WIDTH, DISPLAY_HEIGHT)
         display.initialize()
         print("Display initialized successfully.")
+
+        # Update display with historical data from database
+        historical_data = get_historical_data(hours=2)  # Get last 2 hours of data
+        print(f"Retrieved {len(historical_data)} historical data points from database:")
+        for data_point in historical_data:
+            print(f"Time: {data_point['time']}, Temp: {data_point['temperature']}, Humidity: {data_point['humidity']}")
+            display.add_data_point(data_point)
+        
+        if historical_data:
+            latest_data = historical_data[0]
+            current_temp = latest_data['temperature']
+            current_humidity = latest_data['humidity']
+            status, minutes, is_active = get_estimated_time()
+            status_title, status_message = get_status_message(current_temp, (status, minutes, is_active))
+            display.update(current_temp, current_humidity, status_title, status_message)
+            print("Display updated with historical data.")
+        else:
+            print("No historical data available for initial display update.")
     except Exception as e:
-        print(f"Error initializing display: {e}")
+        print(f"Error initializing or updating display: {e}")
         print("Continuing without display updates.")
         display = None
 
-    ruuvi.start_realtime_listener()
+    print("Starting real-time listener...")
+    listener_task = asyncio.create_task(ruuvi.start_realtime_listener())
 
     display_sleep_until = 0
     last_update_time = 0
@@ -45,37 +75,32 @@ def main():
         while True:
             current_time = time.time()
 
-            try:
-                current_temp = ruuvi.get_current_temp()
-                current_humidity = ruuvi.get_current_humidity()
-                print(f"Current readings - Temperature: {current_temp:.2f}°C, Humidity: {current_humidity:.2f}%")
-            except Exception as e:
-                print(f"Error getting RuuviTag data: {e}")
-                current_temp = 0
-                current_humidity = 0
+            current_temp = ruuvi.get_current_temp()
+            current_humidity = ruuvi.get_current_humidity()
 
-            if current_temp != 0 and current_humidity != 0:  # Assuming 0 means no data
-                status, minutes, is_active = get_estimated_time()
-                print(f"Sauna status: {status}, Estimated time: {minutes} minutes, Active: {is_active}")
+            if current_temp is not None and current_humidity is not None:
+                print(f"Current readings - Temperature: {current_temp:.2f}°C, Humidity: {current_humidity:.2f}%")
                 
-                if display and (is_active or current_time >= display_sleep_until):
-                    if display.is_sleeping:
-                        display.wake()
-                        print("Display woken up.")
+                if display:
+                    status, minutes, is_active = get_estimated_time()
                     
-                    if current_time - last_update_time >= UPDATE_INTERVAL:
-                        status_title, status_message = get_status_message(current_temp, (status, minutes, is_active))
+                    if is_active or current_time >= display_sleep_until:
+                        if display.is_sleeping:
+                            display.wake()
                         
-                        print(f"Updating display - Status: {status_title}, Message: {status_message}")
-                        display.update(current_temp, current_humidity, status_title, status_message)
-                        last_update_time = current_time
-                    
-                    if not is_active:
-                        display_sleep_until = current_time + SLEEP_DURATION
-                        print(f"Sauna inactive. Display will sleep until: {time.ctime(display_sleep_until)}")
-                elif display and not display.is_sleeping:
-                    display.sleep()
-                    print("Display put to sleep.")
+                        if current_time - last_update_time >= UPDATE_INTERVAL:
+                            status_title, status_message = get_status_message(current_temp, (status, minutes, is_active))
+                            
+                            print(f"Updating display - Status: {status_title}, Message: {status_message}")
+                            display.update(current_temp, current_humidity, status_title, status_message)
+                            last_update_time = current_time
+                        
+                        if not is_active:
+                            display_sleep_until = current_time + SLEEP_DURATION
+                            print(f"Sauna inactive. Display will sleep until: {time.ctime(display_sleep_until)}")
+                    elif not display.is_sleeping:
+                        display.sleep()
+                        print("Display put to sleep.")
 
             # Cleanup old data once a day
             if current_time - last_cleanup >= 86400:  # 86400 seconds = 1 day
@@ -84,12 +109,21 @@ def main():
                 last_cleanup = current_time
                 print("Daily data cleanup complete.")
 
-            time.sleep(10)  # Check every 10 seconds
+            await asyncio.sleep(10)  # Check every 10 seconds
             print("Waiting for next update cycle...")
 
-    except KeyboardInterrupt:    
-        print("Ctrl + C pressed. Stopping listener and exiting...")
-        ruuvi.stop_listener()
+    except asyncio.CancelledError:
+        print("Main loop cancelled. Cleaning up...")
+    finally:
+        print("Stopping listener and exiting...")
+        listener_task.cancel()
+        try:
+            await listener_task
+        except asyncio.CancelledError:
+            pass
 
 if __name__ == '__main__':
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt received. Exiting gracefully.")
