@@ -1,6 +1,8 @@
 import sqlite3
 from datetime import datetime, timedelta
 import threading
+import pandas as pd
+import numpy as np
 from contextlib import contextmanager
 
 from config import DB_NAME
@@ -25,10 +27,28 @@ def setup_database():
         c.execute('''CREATE TABLE IF NOT EXISTS measurements
                      (timestamp TEXT PRIMARY KEY, temperature REAL, humidity REAL)''')
         conn.commit()
+    print("Database setup complete.")
+    check_and_update_schema()
+
+def check_and_update_schema():
+    """
+    Check if the database schema is up to date and update it if necessary.
+    """
+    with db_lock, get_db_connection() as conn:
+        c = conn.cursor()
+        
+        # Check if 'time' column exists
+        c.execute("PRAGMA table_info(measurements)")
+        columns = [col[1] for col in c.fetchall()]
+        
+        if 'time' in columns and 'timestamp' not in columns:
+            print("Updating database schema: renaming 'time' column to 'timestamp'")
+            c.execute("ALTER TABLE measurements RENAME COLUMN time TO timestamp")
+            conn.commit()
 
 def store_measurement(timestamp, temperature, humidity):
     """
-    Store a single measurement in the database.
+    Store a single measurement in the database, updating existing record if it exists.
     
     Args:
     timestamp (str): The time of the measurement in 'YYYY-MM-DD HH:MM:SS' format.
@@ -37,16 +57,23 @@ def store_measurement(timestamp, temperature, humidity):
     """
     with db_lock, get_db_connection() as conn:
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO measurements VALUES (?, ?, ?)",
-                  (timestamp, temperature, humidity))
+        c.execute("""
+            INSERT INTO measurements (timestamp, temperature, humidity)
+            VALUES (?, ?, ?)
+            ON CONFLICT(timestamp) DO UPDATE SET
+            temperature = COALESCE(EXCLUDED.temperature, temperature),
+            humidity = COALESCE(EXCLUDED.humidity, humidity)
+        """, (timestamp, temperature, humidity))
         conn.commit()
+    print(f"Stored/Updated measurement: Timestamp: {timestamp}, Temp: {temperature}, Humidity: {humidity}")
 
-def get_historical_data(hours=2):
+def get_historical_data(hours=2, resample_interval='5min'):
     """
     Retrieve historical data from the database for the specified number of hours.
     
     Args:
     hours (int): The number of hours of historical data to retrieve (default is 2).
+    resample_interval (str): Interval to resample data to (default is '5min' for 5 minutes).
     
     Returns:
     list: A list of dictionaries containing timestamp, temperature, and humidity data.
@@ -54,9 +81,33 @@ def get_historical_data(hours=2):
     with db_lock, get_db_connection() as conn:
         c = conn.cursor()
         time_threshold = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
-        c.execute("SELECT * FROM measurements WHERE timestamp > ? ORDER BY timestamp DESC", (time_threshold,))
+        c.execute("""
+            SELECT timestamp, temperature, humidity 
+            FROM measurements 
+            WHERE timestamp > ? 
+            ORDER BY timestamp ASC
+        """, (time_threshold,))
         data = c.fetchall()
-    return [{"time": row[0], "temperature": row[1], "humidity": row[2]} for row in data]
+    
+    if data:
+        # Convert to pandas DataFrame for easy resampling
+        df = pd.DataFrame(data, columns=['timestamp', 'temperature', 'humidity'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df.set_index('timestamp', inplace=True)
+        
+        # Resample data to specified interval
+        resampled = df.resample(resample_interval).mean()
+        
+        # Fill NaN values with the last known value
+        resampled = resampled.ffill()
+        
+        # Convert back to list of dictionaries
+        return [{'time': index.strftime('%Y-%m-%d %H:%M:%S'), 
+                 'temperature': row['temperature'] if not pd.isna(row['temperature']) else None, 
+                 'humidity': row['humidity'] if not pd.isna(row['humidity']) else None} 
+                for index, row in resampled.iterrows()]
+    else:
+        return []
 
 def check_data_freshness():
     """
