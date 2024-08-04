@@ -47,7 +47,7 @@ async def main():
         for data_point in historical_data:
             print(f"Time: {data_point['time']}, Temp: {data_point['temperature']}, Humidity: {data_point['humidity']}")
             display.add_data_point(data_point)
-        
+            
         if historical_data:
             latest_data = historical_data[0]
             current_temp = latest_data['temperature']

@@ -15,8 +15,8 @@ class Display:
         self.is_mock = not self._is_raspberry_pi()
         self.mock_display_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mock_display.png')
         self.font = self.load_font()
-        self.graph_width = int(width * 0.95)  # 95% of display width
-        self.graph_height = int(height * 0.5)  # 50% of display height
+        self.graph_width = int(width * 0.95)  # 100% of display width
+        self.graph_height = int(height * 0.48)  # 48% of display height
 
         if not self.is_mock:
             import epaper # type: ignore
@@ -60,15 +60,18 @@ class Display:
         draw = ImageDraw.Draw(image)
 
         # Draw temperature gauge
-        self.draw_temperature_gauge(draw, current_temp, 120, 120, 110)
+        self.draw_gauge(draw, current_temp, 120, 120, 110, "Temperature", "°C", 0, 100)
 
-        # Draw humidity and status
-        self.draw_humidity_and_status(draw, current_humidity, status_title, status_message)
+        # Draw humidity gauge
+        self.draw_gauge(draw, current_humidity, self.width - 120, 120, 110, "Humidity", "%", 0, 100)
+
+        # Draw status
+        self.draw_status(draw, status_title, status_message)
 
         if self.historical_data:
             # Create and paste graph
             graph = self.create_graph()
-            image.paste(graph, (int(self.width * 0.025), 240))  # 2.5% margin on left
+            image.paste(graph, (int(self.width * 0.025), 250))  # 2.5% margin on left
 
         if self.is_mock:
             try:
@@ -79,7 +82,7 @@ class Display:
                 print(f"Current working directory: {os.getcwd()}")
                 print(f"File path used: {self.mock_display_path}")
         else:
-            self.epd.display(self.epd.getbuffer(image))
+            self.epd.display(self.epd.getbuffer(image)) 
 
     def add_data_point(self, data_point):
         self.historical_data.append(data_point)
@@ -104,9 +107,10 @@ class Display:
         ax1.plot(times, temps, 'k-', linewidth=1, label='Temperature')
         ax2.plot(times, humidities, 'k--', linewidth=1, label='Humidity')
 
-        ax1.set_xlabel('Time', fontsize=8)
-        ax1.set_ylabel('Temperature (°C)', fontsize=8)
-        ax2.set_ylabel('Humidity (%)', fontsize=8)
+        # No need for time label maybe
+        # ax1.set_xlabel('Time', fontsize=10)
+        ax1.set_ylabel('Temperature (°C)', fontsize=10)
+        ax2.set_ylabel('Humidity (%)', fontsize=10)
 
         # Format x-axis to show time
         def format_time(x, pos):
@@ -132,14 +136,15 @@ class Display:
         ax1.yaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=5))
         ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=5))
 
-        ax1.tick_params(axis='both', which='major', labelsize=6)
-        ax2.tick_params(axis='both', which='major', labelsize=6)
+        ax1.tick_params(axis='both', which='major', labelsize=10)
+        ax2.tick_params(axis='both', which='major', labelsize=10)
 
-        plt.title('Temperature and Humidity Over Time', fontsize=10)
+        # Not sure if the title is necessary
+        # plt.title('Temperature and Humidity Over Time', fontsize=12)
         
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=6)
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8)
 
         # Adjust layout with reduced bottom margin
         plt.tight_layout(pad=0.4, rect=[0, 0.03, 1, 0.95])
@@ -155,7 +160,7 @@ class Display:
         graph_image = Image.open(buf).convert('1')
         return graph_image.resize((self.graph_width, self.graph_height), Image.LANCZOS)
 
-    def draw_temperature_gauge(self, draw, value, x, y, radius):
+    def draw_gauge(self, draw, value, x, y, radius, label, unit, min_value, max_value):
         # Draw outer circle
         draw.ellipse([x-radius, y-radius, x+radius, y+radius], outline=0)
         
@@ -169,23 +174,42 @@ class Display:
             draw.line((x1, y1, x2, y2), fill=0)
             
             if i % 2 == 0:
-                num = i * 10
+                num = min_value + i * (max_value - min_value) // 10
                 num_x = x + int((radius - 25) * math.cos(angle))
                 num_y = y + int((radius - 25) * math.sin(angle))
                 draw.text((num_x, num_y), str(num), fill=0, font=self.load_font(12))
 
+        # Draw label
+        draw.text((x, y+radius+10), label, fill=0, anchor="mm", font=self.load_font(18))
+        
+        # Draw value with white stroke
+        value_font = self.load_font(36)
+        value_text = f"{int(value)}{unit}"
+        
+        # Position for the value text
+        value_x = x
+        value_y = y + radius - 80
+
+        # Function to draw text with stroke
+        def draw_text_with_stroke(draw, text, x, y, font, text_color, stroke_color, stroke_width):
+            # Draw stroke
+            for offset_x in range(-stroke_width, stroke_width+1):
+                for offset_y in range(-stroke_width, stroke_width+1):
+                    draw.text((x+offset_x, y+offset_y), text, font=font, fill=stroke_color, anchor="mm")
+            # Draw text
+            draw.text((x, y), text, font=font, fill=text_color, anchor="mm")
+
+        # Draw value text with white stroke
+        draw_text_with_stroke(draw, value_text, value_x, value_y, value_font, 0, 255, 2)
+
         # Draw needle
-        angle = math.radians(-135 + (value / 100) * 270)
+        angle = math.radians(-135 + ((value - min_value) / (max_value - min_value)) * 270)
         needle_x = x + int((radius - 15) * math.cos(angle))
         needle_y = y + int((radius - 15) * math.sin(angle))
         draw.line((x, y, needle_x, needle_y), fill=0, width=2)
         
         # Draw center circle
         draw.ellipse([x-3, y-3, x+3, y+3], fill=0)
-        
-        # Draw value
-        draw.text((x, y+radius-60), f"{int(value)}°C", fill=0, anchor="mm", font=self.load_font(28))
-
 
     def draw_table(self, draw, data):
         start_x, start_y = 50, 400
@@ -209,10 +233,6 @@ class Display:
                 draw.text((start_x + col*cell_width + 5, start_y + (row+1)*cell_height + 5),
                           value, font=font, fill=0)
 
-
-    def draw_humidity_and_status(self, draw, humidity, status_title, status_message):
-        draw.text((300, 50), "Humidity", font=self.load_font(18), fill=0)
-        draw.text((300, 75), f"{int(humidity)}%", font=self.load_font(36), fill=0)
-
-        draw.text((300, 130), status_title, font=self.load_font(18), fill=0)
-        draw.text((300, 155), status_message, font=self.load_font(24), fill=0)
+    def draw_status(self, draw, status_title, status_message):
+        draw.text((self.width // 2, 100), status_title, font=self.load_font(28), fill=0, anchor="mm")
+        draw.text((self.width // 2, 140), status_message, font=self.load_font(28), fill=0, anchor="mm")
