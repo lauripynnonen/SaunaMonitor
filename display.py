@@ -13,12 +13,13 @@ class Display:
         self.historical_data = []
         self.is_mock = not self._is_raspberry_pi()
         self.font = self.load_font()
+        self.mock_display_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mock_display.png')
 
         if not self.is_mock:
-            import epaper
+            import epaper # type: ignore
             self.epd = epaper.epaper('epd7in5_V2').EPD()
         else:
-            print("Using mock display.")
+            print(f"Using mock display. Images will be saved to: {self.mock_display_path}")
 
     def _is_raspberry_pi(self):
         return os.name == 'posix' and os.uname().sysname == 'Linux' and os.uname().machine.startswith('arm')
@@ -64,10 +65,16 @@ class Display:
             self.draw_table(draw, self.historical_data[-8:])  # Display last 8 data points
 
         if self.is_mock:
-            image.save('mock_display.png')
-            print("Display image saved as 'mock_display.png'")
+            try:
+                image.save(self.mock_display_path)
+                print(f"Display image saved as '{self.mock_display_path}'")
+            except Exception as e:
+                print(f"Error saving mock display image: {e}")
+                print(f"Current working directory: {os.getcwd()}")
+                print(f"File path used: {self.mock_display_path}")
         else:
             self.epd.display(self.epd.getbuffer(image))
+
 
     def add_data_point(self, data_point):
         self.historical_data.append(data_point)
