@@ -2,6 +2,7 @@ import math
 import traceback
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
+from matplotlib.dates import DateFormatter
 import io
 from datetime import datetime, timedelta
 from data_analysis import get_current_time
@@ -77,11 +78,16 @@ class Display:
             draw.text((self.width // 2, 10), f"Current Time: {current_time.strftime('%H:%M')}", 
                     fill=0, anchor="mt", font=self.load_font(24))
 
+            # Calculate new x-positions for gauges
+            side_padding = 130  # Increased from 120
+            temp_gauge_x = side_padding
+            humidity_gauge_x = self.width - side_padding
+
             # Draw temperature gauge
-            self.draw_gauge(draw, current_temp, 120, 140, 110, "Temperature", "°C", 0, 100)
+            self.draw_gauge(draw, current_temp, temp_gauge_x, 140, 110, "Temperature", "°C", 0, 100)
 
             # Draw humidity gauge
-            self.draw_gauge(draw, current_humidity, self.width - 120, 140, 110, "Humidity", "%", 0, 100)
+            self.draw_gauge(draw, current_humidity, humidity_gauge_x, 140, 110, "Humidity", "%", 0, 100)
 
             # Draw status
             self.draw_status(draw, status_title, status_message)
@@ -89,7 +95,10 @@ class Display:
             if self.historical_data:
                 # Create and paste graph
                 graph = self.create_graph()
-                image.paste(graph, (int(self.width * 0.025), 280))  # Moved up
+                # Center the graph horizontally
+                graph_x = (self.width - self.graph_width) // 2 + 95
+                graph_y = 280  # Adjust this value if needed
+                image.paste(graph, (graph_x, graph_y))
 
             if self.is_mock:
                 try:
@@ -113,74 +122,71 @@ class Display:
         self.historical_data = [point for point in self.historical_data if datetime.strptime(point['time'], '%Y-%m-%d %H:%M:%S') > two_hours_ago]
 
     def create_graph(self):
+        # Increase the graph size by 25%
+        self.graph_width = int(self.graph_width * 1.25)
+        self.graph_height = int(self.graph_height * 1.25)
+
+        # Calculate the size in inches
+        dpi = 100  # Set this to match your e-paper display's DPI if known
+        width_inches = self.graph_width / dpi
+        height_inches = self.graph_height / dpi
+
         # Parse the full datetime
         datetimes = [datetime.strptime(item['time'], '%Y-%m-%d %H:%M:%S') for item in self.historical_data]
-        
-        # Convert times to numerical values (minutes since midnight)
-        times = [(dt.hour * 60 + dt.minute) for dt in datetimes]
-        
         temps = [item['temperature'] for item in self.historical_data]
         humidities = [item['humidity'] for item in self.historical_data]
 
-        # Create figure with size in inches
-        fig, ax1 = plt.subplots(figsize=(self.graph_width / 100, self.graph_height / 100))
+        # Create figure with exact size
+        fig, ax1 = plt.subplots(figsize=(width_inches, height_inches), dpi=dpi)
         ax2 = ax1.twinx()
 
-        ax1.plot(times, temps, 'k-', linewidth=1, label='Temperature')
-        ax2.plot(times, humidities, 'k--', linewidth=1, label='Humidity')
+        # Use a simple, clear font
+        plt.rcParams['font.family'] = 'DejaVu Sans'
+        plt.rcParams['font.size'] = 10  # Increased base font size
 
-        # No need for time label maybe
-        # ax1.set_xlabel('Time', fontsize=10)
-        ax1.set_ylabel('Temperature (°C)', fontsize=12)
-        ax2.set_ylabel('Humidity (%)', fontsize=12)
+        # Plot data
+        ax1.plot(datetimes, temps, 'k-', linewidth=1.5, label='Temperature')
+        ax2.plot(datetimes, humidities, 'k--', linewidth=1.5, label='Humidity')
 
-        # Format x-axis to show time
-        def format_time(x, pos):
-            hours, minutes = divmod(int(x), 60)
-            return f'{hours:02d}:{minutes:02d}'
-        
-        ax1.xaxis.set_major_formatter(plt.FuncFormatter(format_time))
-        
-        # Rotate and align the tick labels so they look better
+        # Set labels
+        ax1.set_ylabel('Temp (°C)', fontsize=10)
+        ax2.set_ylabel('Humidity (%)', fontsize=10)
+
+        # Format x-axis
+        ax1.xaxis.set_major_formatter(DateFormatter('%H:%M'))
         fig.autofmt_xdate(rotation=45, ha='right')
 
-        # Set y-axis limits dynamically
+        # Set y-axis limits
         temp_min, temp_max = min(temps), max(temps)
         hum_min, hum_max = min(humidities), max(humidities)
-        
-        temp_range = max(0.5, temp_max - temp_min)  # Ensure a minimum range
-        hum_range = max(2, hum_max - hum_min)  # Ensure a minimum range
-        
+        temp_range = max(0.5, temp_max - temp_min)
+        hum_range = max(2, hum_max - hum_min)
         ax1.set_ylim(temp_min - 0.1 * temp_range, temp_max + 0.1 * temp_range)
-        ax2.set_ylim(hum_min - 0.1 * hum_range, hum_max + 0.1 * hum_range)
+        ax2.set_ylim(hum_min - 0.1 * hum_range, hum_max + 0.1 * temp_range)
 
-        # Set integer ticks for both y-axes
+        # Set ticks
         ax1.yaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=5))
         ax2.yaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=5))
-
         ax1.tick_params(axis='both', which='major', labelsize=10)
         ax2.tick_params(axis='both', which='major', labelsize=10)
 
-        # Not sure if the title is necessary
-        # plt.title('Temperature and Humidity Over Time', fontsize=12)
-        
+        # Add legend
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8)
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=10)
 
-        # Adjust layout with reduced bottom margin
-        plt.tight_layout(pad=0.4, rect=[0, 0.03, 1, 0.95])
-        
-        # Fine-tune the subplot adjust
-        fig.subplots_adjust(bottom=0.2)  # Increased bottom margin to accommodate rotated labels
+        # Adjust layout
+        plt.tight_layout(pad=0.4, rect=[0.1, 0.1, 0.9, 0.9])
 
+        # Save to buffer
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         buf.seek(0)
 
+        # Open as image and convert to 1-bit color without resizing
         graph_image = Image.open(buf).convert('1')
-        return graph_image.resize((self.graph_width, self.graph_height), Image.LANCZOS)
+        return graph_image
 
     def draw_gauge(self, draw, value, x, y, radius, label, unit, min_value, max_value):
         # Draw outer circle
@@ -202,7 +208,7 @@ class Display:
                 draw.text((num_x, num_y), str(num), fill=0, font=self.load_font(12))
 
         # Draw label
-        draw.text((x, y+radius+10), label, fill=0, anchor="mm", font=self.load_font(18))
+        draw.text((x, y+radius+15), label, fill=0, anchor="mm", font=self.load_font(18))
         
         # Draw value with white stroke
         value_font = self.load_font(36)
@@ -243,8 +249,8 @@ class Display:
         
         # Calculate positions
         center_x = self.width // 2
-        title_y = 120  # Moved up
-        message_y = title_y + title_height + 5  # Reduced padding
+        title_y = 110  # Moved up
+        message_y = title_y + title_height + 15  # Reduced padding
         
         # Draw title
         draw.text((center_x, title_y), status_title, font=title_font, fill=0, anchor="mt")

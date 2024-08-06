@@ -25,7 +25,7 @@ async def main():
     except Exception as e:
         print(f"Error during historical data download attempt: {e}")
         print("Continuing with real-time data only.")
-
+    
     if check_data_freshness():
         print("Data is fresh.")
     else:
