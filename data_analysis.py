@@ -1,6 +1,16 @@
 from datetime import datetime, timedelta
+import numpy as np
+from scipy.stats import linregress
 from config import TARGET_TEMP, MIN_ACTIVE_TEMP
 from database import get_historical_data
+import pytz
+
+# Assuming you're in Finland, but adjust the timezone as needed
+TIMEZONE = pytz.timezone('Europe/Stockholm')
+
+def get_current_time():
+    """Get the current time in the specified timezone."""
+    return datetime.now(TIMEZONE)
 
 def get_temperature_trend(hours=0.5):
     """
@@ -33,47 +43,67 @@ def get_estimated_time():
     
     Returns:
     tuple: A tuple containing the status (str), estimated time in minutes (int or None),
-           and a boolean indicating if the sauna is active.
+           expected ready time (datetime or None), and a boolean indicating if the sauna is active.
     """
-    historical_data = get_historical_data(hours=1)  # Use last 1 hour of data
+    historical_data = get_historical_data(hours=2)  # Use last 2 hours of data
     if len(historical_data) < 2:
-        return "Insufficient data", None, False
+        return "Insufficient data", None, None, False
     
-    # Convert data to list of tuples (timestamp, temperature)
-    temp_data = [(datetime.strptime(d['time'], '%Y-%m-%d %H:%M:%S'), d['temperature']) for d in historical_data]
-    temp_data.sort()  # Ensure data is in chronological order
+    # Sort data by time
+    historical_data.sort(key=lambda x: x['time'])
     
-    current_temp = temp_data[-1][1]
+    # Convert string times to datetime objects
+    for data in historical_data:
+        data['time'] = datetime.strptime(data['time'], '%Y-%m-%d %H:%M:%S')
+    
+    current_temp = historical_data[-1]['temperature']
+    current_time = get_current_time()
     
     # Check if the sauna is cold
     if current_temp < MIN_ACTIVE_TEMP:
-        return "Cold", None, False
+        return "Cold", None, None, False
     
     # Check if the sauna is at or above target temperature
     if current_temp >= TARGET_TEMP:
-        return "Ready", None, True
+        return "Ready", None, current_time, True
     
-    # Calculate temperature change over the last 15 minutes
-    recent_data = [d for d in temp_data if d[0] >= temp_data[-1][0] - timedelta(minutes=15)]
-    if len(recent_data) < 2:
-        recent_data = temp_data[-2:]  # Use at least two points
+    # Calculate temperature change over different time periods
+    time_periods = [5, 15, 30]  # minutes
+    rates = []
     
-    time_diff = (recent_data[-1][0] - recent_data[0][0]).total_seconds() / 3600  # in hours
-    temp_diff = recent_data[-1][1] - recent_data[0][1]
+    for period in time_periods:
+        cutoff_time = current_time - timedelta(minutes=period)
+        recent_data = [d for d in historical_data if d['time'] >= cutoff_time]
+        
+        if len(recent_data) < 2:
+            continue
+        
+        times = [(d['time'] - recent_data[0]['time']).total_seconds() / 60 for d in recent_data]
+        temps = [d['temperature'] for d in recent_data]
+        
+        slope, _, _, _, _ = linregress(times, temps)
+        rates.append(slope)
+    
+    if not rates:
+        return "Temperature stable", None, None, True
+    
+    # Use weighted average of rates, giving more weight to recent data
+    weights = [3, 2, 1][:len(rates)]
+    avg_rate = np.average(rates, weights=weights)
     
     # Check for stable temperature
-    if abs(temp_diff) < 1:  # Less than 1°C change in 15 minutes
-        return "Temperature stable", None, True
+    if abs(avg_rate) < 0.1:  # Less than 0.1°C change per minute
+        return "Temperature stable", None, None, True
     
     # Check if heating
-    if temp_diff > 0:
-        rate = temp_diff / time_diff  # °C per hour
-        time_to_target = (TARGET_TEMP - current_temp) / rate
-        minutes_to_target = int(time_to_target * 60)
-        return "Heating", minutes_to_target, True
+    if avg_rate > 0:
+        time_to_target = (TARGET_TEMP - current_temp) / avg_rate
+        minutes_to_target = int(time_to_target)
+        expected_ready_time = current_time + timedelta(minutes=minutes_to_target)
+        return "Heating", minutes_to_target, expected_ready_time, True
     
     # Temperature is dropping
-    return "Cooling", None, True
+    return "Cooling", None, None, True
 
 def get_status_message(current_temp, estimate):
     """
@@ -86,10 +116,11 @@ def get_status_message(current_temp, estimate):
     Returns:
     tuple: A tuple containing the status title (str) and status message (str).
     """
-    status, minutes, is_active = estimate
+    status, minutes, expected_ready_time, is_active = estimate
+    current_time = get_current_time()
     
     if status == "Cold":
-        return "Sauna is cold", "Turn on to heat"
+        return "Sauna is not heating", "Time to light a fire?"
     elif status == "Insufficient data":
         return "Collecting data", "Please wait..."
     elif status == "Temperature stable":
@@ -100,10 +131,10 @@ def get_status_message(current_temp, estimate):
     elif status == "Ready":
         return "Sauna is ready!", "Enjoy your sauna"
     elif status == "Heating":
-        if minutes > 60:
-            return f"Heating", f"{minutes // 60}h {minutes % 60}min to {TARGET_TEMP}°C"
+        if minutes is not None and expected_ready_time is not None:
+            return f"Heating", f"Ready in: {minutes} min\nAt: {expected_ready_time.strftime('%H:%M')}"
         else:
-            return f"Heating", f"{minutes} min to {TARGET_TEMP}°C"
+            return f"Heating", "Estimating time..."
     elif status == "Cooling":
         return "Temp dropping", "Add wood if needed"
     else:

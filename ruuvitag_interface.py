@@ -44,11 +44,8 @@ class RuuviTagInterface:
                 if 0x0499 in manufacturer_data:
                     self.handle_data(manufacturer_data[0x0499])
 
-        scanner = BleakScanner()
-        scanner.register_detection_callback(detection_callback)
-        await scanner.start()
-        await asyncio.sleep(5.0)
-        await scanner.stop()
+        async with BleakScanner(detection_callback=detection_callback) as scanner:
+            await asyncio.sleep(5.0)
 
     def handle_data(self, data):
         if self.use_mock_data or self.bluetooth_error:
@@ -167,7 +164,7 @@ class RuuviTagInterface:
                 await client.write_gatt_char(UART_RX_CHAR_UUID, request_data)
 
                 print("Waiting for historical data...")
-                await asyncio.sleep(60)  # Wait for up to 60 seconds for data
+                await asyncio.sleep(10)  # Wait for up to 60 seconds for data
 
                 await client.stop_notify(UART_TX_CHAR_UUID)
 

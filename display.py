@@ -257,4 +257,3 @@ class Display:
             message_height = message_bbox[3] - message_bbox[1]
             line_y = message_y + i * (message_height + 3)  # Reduced space between lines
             draw.text((center_x, line_y), line, font=message_font, fill=0, anchor="mt")
-
