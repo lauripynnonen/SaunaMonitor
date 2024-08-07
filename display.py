@@ -23,15 +23,9 @@ class Display:
             self.graph_width = int(width * 0.95)  # 95% of display width
             self.graph_height = int(height * 0.40)  # 40% of display height
 
-            if not self.is_mock:
-                try:
-                    import epaper # type: ignore
-                    self.epd = epaper.epaper('epd7in5_V2').EPD()
-                    print("Successfully initialized epaper display")
-                except Exception as e:
-                    print(f"Error initializing epaper display: {str(e)}")
-                    self.is_mock = True
-         
+            self.epd = epd = epd7in5_V2.EPD()
+            print("Successfully initialized epaper display")
+                
             if self.is_mock:
                 print(f"Using mock display. Images will be saved to: {self.mock_display_path}")
         except Exception as e:
@@ -263,4 +257,3 @@ class Display:
             message_height = message_bbox[3] - message_bbox[1]
             line_y = message_y + i * (message_height + 3)  # Reduced space between lines
             draw.text((center_x, line_y), line, font=message_font, fill=0, anchor="mt")
-
