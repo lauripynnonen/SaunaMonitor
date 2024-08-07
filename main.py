@@ -1,5 +1,6 @@
 import asyncio
 import time
+import pandas as pd
 from database import setup_database, check_data_freshness, cleanup_old_data, get_historical_data
 from ruuvitag_interface import RuuviTagInterface
 from display import Display
@@ -24,7 +25,7 @@ async def main():
     except Exception as e:
         print(f"Error during historical data download attempt: {e}")
         print("Continuing with real-time data only.")
-        
+
     if check_data_freshness():
         print("Data is fresh.")
     else:
@@ -47,6 +48,7 @@ async def main():
         for data_point in historical_data:
             print(f"Time: {data_point['time']}, Temp: {data_point['temperature']}, Humidity: {data_point['humidity']}")
             display.add_data_point(data_point)
+
         if historical_data:
             latest_data = historical_data[-1]  # Use the most recent data point
             current_temp = latest_data['temperature']
@@ -82,14 +84,12 @@ async def main():
                 
                 if display:
                     status, minutes, expected_ready_time, is_active = get_estimated_time()  # Now unpacking 4 values
-
                     
                     if is_active or current_time >= display_sleep_until:
                         if display.is_sleeping:
                             display.wake()
                         
                         if current_time - last_update_time >= UPDATE_INTERVAL:
-
                             status_title, status_message = get_status_message(current_temp, (status, minutes, expected_ready_time, is_active))  # Passing 4 values
                             
                             print(f"Updating display - Status: {status_title}, Message: {status_message}")
