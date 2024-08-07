@@ -33,7 +33,7 @@ Sauna Monitor is a Raspberry Pi-based system that uses a RuuviTag sensor to moni
 
 2. Install required Python packages:
    ```
-   pip install ruuvitag_sensor bleak Pillow matplotlib
+   pip install ruuvitag_sensor bleak Pillow matplotlib pandas
    ```
 
 3. Install Waveshare e-Paper library:

@@ -6,6 +6,7 @@ from matplotlib.dates import DateFormatter
 import io
 from datetime import datetime, timedelta
 from data_analysis import get_current_time
+from waveshare_epd import epd7in5_V2 # type: ignore
 import os
 
 class Display:
@@ -16,7 +17,7 @@ class Display:
             self.height = height
             self.is_sleeping = False
             self.historical_data = []
-            self.is_mock = not self._is_raspberry_pi()
+            self.is_mock = False #not self._is_raspberry_pi()
             self.mock_display_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mock_display.png')
             self.font = self.load_font()
             self.graph_width = int(width * 0.95)  # 95% of display width
@@ -30,7 +31,7 @@ class Display:
                 except Exception as e:
                     print(f"Error initializing epaper display: {str(e)}")
                     self.is_mock = True
-            
+         
             if self.is_mock:
                 print(f"Using mock display. Images will be saved to: {self.mock_display_path}")
         except Exception as e:
@@ -52,7 +53,7 @@ class Display:
     def initialize(self):
         if not self.is_mock:
             self.epd.init()
-            self.epd.Clear(0xFF)
+            self.epd.Clear()
         self.is_sleeping = False
 
     def sleep(self):
