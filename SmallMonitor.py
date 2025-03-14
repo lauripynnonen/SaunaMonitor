@@ -10,7 +10,7 @@ import base64
 from bleak import BleakClient, BleakScanner
 
 # Configuration
-RUUVITAG_MAC = "C3:94:E8:74:FB:D3"
+RUUVITAG_MAC = "C3:94:E8:74:FB:D3"  # Updated MAC address
 DB_NAME = "bedroom_monitor.db"
 UPDATE_INTERVAL = 60   # 1 minute in seconds
 
@@ -159,8 +159,6 @@ class RuuviTagInterface:
         try:
             async with BleakClient(RUUVITAG_MAC, timeout=30.0) as client:
                 print(f"Connected to RuuviTag: {RUUVITAG_MAC}")
-                # Implementation would be similar to your original code
-                # For brevity, I'm using the mock method
                 await self.mock_historical_data_download()
         except Exception as e:
             print(f"Error during historical data download: {e}")
@@ -205,35 +203,39 @@ class Display:
         if self.is_sleeping:
             return
             
-        image = Image.new('1', (self.epd.height, self.epd.width), 255)  # 1: clear the frame
+        # Reverse colors: black background with white text
+        image = Image.new('1', (self.epd.height, self.epd.width), 0)  # 0: black background
         draw = ImageDraw.Draw(image)
 
-        # Load fonts - make temperature font larger
+        # Load fonts - make temperature font even larger
         font16 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 16)
         font18 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 18)
-        font36 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 36)
+        # Increase font size from 36 to 48 for temperature
+        font48 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 48)
         
         current_time = datetime.now().strftime("%H:%M")
         
-        # Draw time at top
-        draw.text((10, 5), current_time, font=font18, fill=0)
-        
-        # Draw temperature with trend arrow - make it dominate the view
+        # Draw temperature with trend arrow - make it even more dominant
         trend = get_temp_trend()
         temp_text = f"{current_temp:.1f}°C"
-        # Center the temperature
-        temp_width = font36.getbbox(temp_text)[2]
-        draw.text(((image.width - temp_width) // 2, 30), temp_text, font=font36, fill=0)
+        
+        # Center the temperature and position it higher up
+        temp_width = font48.getbbox(temp_text)[2]
+        draw.text(((image.width - temp_width) // 2, 15), temp_text, font=font48, fill=255)  # fill=255 for white text
         
         # Add trend arrow next to temperature
-        draw.text((image.width // 2 + temp_width // 2 + 5, 40), trend, font=font36, fill=0)
+        draw.text((image.width // 2 + temp_width // 2 + 5, 25), trend, font=font48, fill=255)
         
         # Draw humidity
-        draw.text((10, 80), f"Humidity: {current_humidity:.1f}%", font=font18, fill=0)
+        draw.text((10, 75), f"Humidity: {current_humidity:.1f}%", font=font18, fill=255)
         
         # Draw comfort status
         status = get_comfort_status(current_temp, current_humidity)
-        draw.text((10, 105), status, font=font18, fill=0)
+        draw.text((10, 100), status, font=font18, fill=255)
+        
+        # Draw time at bottom right corner
+        time_width = font18.getbbox(current_time)[2]
+        draw.text((image.width - time_width - 10, image.height - 25), current_time, font=font18, fill=255)
         
         # Rotate the image
         image = image.rotate(90, expand=True)
