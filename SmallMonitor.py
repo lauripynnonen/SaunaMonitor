@@ -10,11 +10,9 @@ import base64
 from bleak import BleakClient, BleakScanner
 
 # Configuration
-RUUVITAG_MAC = "AA:BB:CC:DD:EE:FF"
+RUUVITAG_MAC = "C3:94:E8:74:FB:D3"
 DB_NAME = "bedroom_monitor.db"
-SLEEP_DURATION = 300  # 5 minutes in seconds
 UPDATE_INTERVAL = 60   # 1 minute in seconds
-DISPLAY_MODES = ["basic", "detailed", "history"]
 
 # RuuviTag BLE constants
 UART_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -27,9 +25,6 @@ COMFORT_TEMP_MIN = 18  # 18°C (64.4°F)
 COMFORT_TEMP_MAX = 22  # 22°C (71.6°F)
 COMFORT_HUMIDITY_MIN = 40
 COMFORT_HUMIDITY_MAX = 60
-
-# Global display mode
-current_display_mode = "basic"
 
 class RuuviTagInterface:
     def __init__(self):
@@ -199,8 +194,6 @@ class Display:
     def __init__(self):
         self.epd = None
         self.is_sleeping = False
-        self.last_touch_check = 0
-        self.touch_cooldown = 1  # 1 second cooldown between touch checks
 
     def initialize(self):
         self.epd = epd2in13_V3.EPD()
@@ -215,125 +208,37 @@ class Display:
         image = Image.new('1', (self.epd.height, self.epd.width), 255)  # 1: clear the frame
         draw = ImageDraw.Draw(image)
 
-        # Load fonts
-        font14 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 14)
+        # Load fonts - make temperature font larger
+        font16 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 16)
         font18 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 18)
-        font24 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 24)
+        font36 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 36)
         
         current_time = datetime.now().strftime("%H:%M")
         
-        if current_display_mode == "basic":
-            # Draw time
-            draw.text((10, 5), current_time, font=font18, fill=0)
-            
-            # Draw temperature with trend arrow
-            trend = get_temp_trend()
-            draw.text((10, 30), f"{current_temp:.1f}°C {trend}", font=font24, fill=0)
-            
-            # Draw humidity
-            draw.text((10, 60), f"Humidity: {current_humidity:.1f}%", font=font18, fill=0)
-            
-            # Draw comfort status
-            status = get_comfort_status(current_temp, current_humidity)
-            draw.text((10, 85), status, font=font18, fill=0)
-            
-        elif current_display_mode == "detailed":
-            # Draw time
-            draw.text((10, 5), current_time, font=font18, fill=0)
-            
-            # Draw temperature with trend
-            trend = get_temp_trend()
-            draw.text((10, 30), f"Temp: {current_temp:.1f}°C {trend}", font=font18, fill=0)
-            
-            # Draw humidity
-            draw.text((10, 50), f"Humidity: {current_humidity:.1f}%", font=font18, fill=0)
-            
-            # Draw comfort ranges
-            draw.text((10, 70), f"Ideal: {COMFORT_TEMP_MIN}-{COMFORT_TEMP_MAX}°C", font=font14, fill=0)
-            draw.text((10, 85), f"Ideal: {COMFORT_HUMIDITY_MIN}-{COMFORT_HUMIDITY_MAX}%", font=font14, fill=0)
+        # Draw time at top
+        draw.text((10, 5), current_time, font=font18, fill=0)
         
-        elif current_display_mode == "history":
-            # Draw time
-            draw.text((10, 5), current_time, font=font18, fill=0)
-            
-            # Get temperature history for last 6 hours
-            history = get_historical_data(hours=6)
-            if len(history) > 0:
-                # Show min/max
-                temps = [d["temperature"] for d in history]
-                min_temp = min(temps)
-                max_temp = max(temps)
-                draw.text((10, 30), f"Min: {min_temp:.1f}°C", font=font18, fill=0)
-                draw.text((10, 50), f"Max: {max_temp:.1f}°C", font=font18, fill=0)
-                draw.text((10, 70), f"Avg: {sum(temps)/len(temps):.1f}°C", font=font18, fill=0)
-                
-                # Draw simple trend line
-                if len(temps) >= 2:
-                    line_start_x, line_start_y = 10, 100
-                    line_width = 110
-                    line_height = 20
-                    # Draw axis
-                    draw.line((line_start_x, line_start_y, line_start_x + line_width, line_start_y), fill=0)
-                    
-                    # Normalize and draw points
-                    max_val = max(temps)
-                    min_val = min(temps)
-                    range_val = max(max_val - min_val, 1)  # Avoid division by zero
-                    
-                    # Draw at most 6 points
-                    step = max(1, len(temps) // 6)
-                    points = []
-                    for i in range(0, len(temps), step):
-                        x = line_start_x + (i * line_width) // len(temps)
-                        y = line_start_y - ((temps[i] - min_val) / range_val) * line_height
-                        points.append((x, y))
-                        draw.ellipse((x-1, y-1, x+1, y+1), fill=0)
-                    
-                    # Connect points with lines
-                    if len(points) > 1:
-                        for i in range(len(points) - 1):
-                            draw.line((points[i], points[i+1]), fill=0)
+        # Draw temperature with trend arrow - make it dominate the view
+        trend = get_temp_trend()
+        temp_text = f"{current_temp:.1f}°C"
+        # Center the temperature
+        temp_width = font36.getbbox(temp_text)[2]
+        draw.text(((image.width - temp_width) // 2, 30), temp_text, font=font36, fill=0)
         
-        # Add touch instruction at bottom
-        draw.text((10, 110), "Tap to change view", font=font14, fill=0)
+        # Add trend arrow next to temperature
+        draw.text((image.width // 2 + temp_width // 2 + 5, 40), trend, font=font36, fill=0)
+        
+        # Draw humidity
+        draw.text((10, 80), f"Humidity: {current_humidity:.1f}%", font=font18, fill=0)
+        
+        # Draw comfort status
+        status = get_comfort_status(current_temp, current_humidity)
+        draw.text((10, 105), status, font=font18, fill=0)
         
         # Rotate the image
         image = image.rotate(90, expand=True)
         
         self.epd.display(self.epd.getbuffer(image))
-
-    def check_touch(self):
-        global current_display_mode
-        current_time = time.time()
-        
-        # Check for touch with cooldown to avoid excessive polling
-        if current_time - self.last_touch_check < self.touch_cooldown:
-            return False
-            
-        self.last_touch_check = current_time
-        
-        # This is a placeholder - you'll need to implement the actual touch detection
-        # based on your hardware's capabilities
-        touch_detected = False
-        try:
-            # Call your touch screen's API here
-            # For example: touch_detected = self.epd.get_touch_status()
-            
-            # For testing, we'll simulate random touches
-            if random.random() < 0.05:  # 5% chance of simulated touch for testing
-                touch_detected = True
-        except Exception as e:
-            print(f"Error checking touch: {e}")
-            return False
-            
-        if touch_detected:
-            # Cycle through display modes
-            idx = DISPLAY_MODES.index(current_display_mode)
-            current_display_mode = DISPLAY_MODES[(idx + 1) % len(DISPLAY_MODES)]
-            print(f"Touch detected, switching to {current_display_mode} mode")
-            return True
-            
-        return False
 
     def sleep(self):
         if not self.is_sleeping:
@@ -343,15 +248,6 @@ class Display:
                 print("Display is now sleeping")
             except Exception as e:
                 print(f"Error putting display to sleep: {e}")
-
-    def wake(self):
-        if self.is_sleeping:
-            try:
-                self.epd.init()
-                self.is_sleeping = False
-                print("Display is now awake")
-            except Exception as e:
-                print(f"Error waking display: {e}")
 
 def setup_database():
     conn = sqlite3.connect(DB_NAME)
@@ -466,7 +362,6 @@ async def main():
     print("Starting real-time listener...")
     listener_task = asyncio.create_task(ruuvi.start_realtime_listener())
 
-    display_sleep_until = 0
     last_update_time = 0
     last_cleanup = time.time()
     
@@ -481,35 +376,16 @@ async def main():
             if current_temp is not None and current_humidity is not None:
                 print(f"Current readings - Temperature: {current_temp:.2f}°C, Humidity: {current_humidity:.2f}%")
                 
-                if display:
-                    # Check for touch input
-                    touch_detected = display.check_touch()
-                    
-                    # Determine if display should be awake
-                    should_be_awake = (current_time < display_sleep_until or touch_detected)
-                    
-                    if should_be_awake:
-                        if display.is_sleeping:
-                            display.wake()
-                        
-                        if touch_detected or current_time - last_update_time >= UPDATE_INTERVAL:
-                            display.update(current_temp, current_humidity)
-                            last_update_time = current_time
-                            
-                            # Reset sleep timer on interaction
-                            if touch_detected:
-                                display_sleep_until = current_time + SLEEP_DURATION
-                                print(f"Touch detected, display will stay awake until: {time.ctime(display_sleep_until)}")
-                    elif not display.is_sleeping:
-                        display.sleep()
-                        print("Display put to sleep.")
+                if display and current_time - last_update_time >= UPDATE_INTERVAL:
+                    display.update(current_temp, current_humidity)
+                    last_update_time = current_time
 
             # Cleanup old data once a day
             if current_time - last_cleanup >= 86400:  # 86400 seconds = 1 day
                 cleanup_old_data()
                 last_cleanup = current_time
 
-            await asyncio.sleep(1)  # Check frequently for touch events
+            await asyncio.sleep(10)
 
     except asyncio.CancelledError:
         print("Main loop cancelled. Cleaning up...")
