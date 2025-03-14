@@ -210,24 +210,42 @@ class Display:
         # Load fonts - make temperature font even larger
         font16 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 16)
         font18 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 18)
-        # Increase font size from 36 to 48 for temperature
+        # Increased font size for temperature
         font48 = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 48)
         
         current_time = datetime.now().strftime("%H:%M")
         
-        # Draw temperature with trend arrow - make it even more dominant
+        # Get screen dimensions for positioning
+        screen_width = image.width
+        screen_height = image.height
+        
+        # Draw temperature in large font, centered horizontally
         trend = get_temp_trend()
         temp_text = f"{current_temp:.1f}°C"
         
-        # Center the temperature and position it higher up
+        # Get temp text dimensions to position it better
         temp_width = font48.getbbox(temp_text)[2]
-        draw.text(((image.width - temp_width) // 2, 15), temp_text, font=font48, fill=255)  # fill=255 for white text
+        temp_height = font48.getbbox(temp_text)[3]
         
-        # Add trend arrow next to temperature
-        draw.text((image.width // 2 + temp_width // 2 + 5, 25), trend, font=font48, fill=255)
+        # Center temperature text
+        temp_x = (screen_width - temp_width) // 2
+        draw.text((temp_x, 15), temp_text, font=font48, fill=255)
         
-        # Draw humidity
-        draw.text((10, 75), f"Humidity: {current_humidity:.1f}%", font=font18, fill=255)
+        # Draw trend arrow separated from the temperature to avoid clipping
+        # Position it to the left of the temperature instead of right
+        trend_x = temp_x - 35
+        draw.text((trend_x, 15), trend, font=font48, fill=255)
+        
+        # Format humidity with label on left and value right-aligned
+        humidity_label = "Humidity %"
+        humidity_value = f"{current_humidity:.1f}"
+        humidity_value_width = font18.getbbox(humidity_value)[2]
+        
+        # Draw humidity label on left
+        draw.text((10, 75), humidity_label, font=font18, fill=255)
+        
+        # Draw humidity value aligned to right, similar to time
+        draw.text((screen_width - humidity_value_width - 10, 75), humidity_value, font=font18, fill=255)
         
         # Draw comfort status
         status = get_comfort_status(current_temp, current_humidity)
@@ -235,7 +253,7 @@ class Display:
         
         # Draw time at bottom right corner
         time_width = font18.getbbox(current_time)[2]
-        draw.text((image.width - time_width - 10, image.height - 25), current_time, font=font18, fill=255)
+        draw.text((screen_width - time_width - 10, screen_height - 25), current_time, font=font18, fill=255)
         
         # Rotate the image
         image = image.rotate(90, expand=True)
